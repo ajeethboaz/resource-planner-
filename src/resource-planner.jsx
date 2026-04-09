@@ -516,7 +516,7 @@ export default function ResourcePlanner() {
               background: `linear-gradient(135deg,${C.accent},${C.accent2})`,
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>⚡</div>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>Resource Effort Planner V2.0</h1>
+            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>Resource Effort PlannerV2.0</h1>
           </div>
           <p style={{ margin: 0, color: C.muted, fontSize: 13 }}>
             Sprint-based cost & margin estimator · {numWeeks} weeks · {roles.length} roles
