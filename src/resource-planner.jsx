@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 
 /* ═══════════════════════════════════════════════
    THEMES
@@ -10,7 +10,7 @@ const THEMES = {
     text: "#e8eaf6", muted: "#6b7599", danger: "#f76f6f",
     success: "#38d9a9", warning: "#f7c94f",
     inputBg: "#0f1117", shadow: "0 4px 24px rgba(0,0,0,0.4)",
-    engineBg: "#151a2b",
+    engineBg: "#151a2b", intakeBg: "#13161f",
   },
   light: {
     bg: "#f0f4fb", surface: "#ffffff", card: "#ffffff", border: "#dde3f0",
@@ -18,68 +18,119 @@ const THEMES = {
     text: "#1a1f36", muted: "#7c86a2", danger: "#dc2626",
     success: "#059669", warning: "#b45309",
     inputBg: "#f0f4fb", shadow: "0 2px 12px rgba(0,0,0,0.07)",
-    engineBg: "#e8eef8",
+    engineBg: "#e8eef8", intakeBg: "#e4eaf6",
   },
 };
 
 /* ═══════════════════════════════════════════════
-   CURRENCY — all internal values stored in USD
-   FX rates: 1 USD → X units of target currency
+   CURRENCY
 ═══════════════════════════════════════════════ */
-const SYMBOLS = { USD: "$", EUR: "€", GBP: "£", INR: "₹" };
+const SYMBOLS  = { USD: "$", EUR: "€", GBP: "£", INR: "₹" };
 const FX_RATES = { USD: 1, EUR: 0.92, GBP: 0.79, INR: 83.5 };
-
-// Convert USD → display currency
-const toFx = (usd, cur) => usd * FX_RATES[cur];
-// Convert display currency → USD
-const fromFx = (val, cur) => val / FX_RATES[cur];
-// Format a USD value in the selected display currency
-const fmt = (usd, sym, cur) =>
-  `${sym}${Math.round(toFx(usd, cur)).toLocaleString("en-IN")}`;
-// Format a per-hour rate (USD) for display, 2 decimals
-const fmtRate = (usd, sym, cur) => {
-  const v = toFx(usd, cur);
-  return `${sym}${v % 1 === 0 ? v.toFixed(0) : v.toFixed(2)}`;
-};
-
-const fmtP = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
-const r2 = (n) => parseFloat(n.toFixed(4));
-
-/* ═══════════════════════════════════════════════
-   INITIAL DATA  (USD values)
-═══════════════════════════════════════════════ */
+const toFx    = (usd, cur) => usd * FX_RATES[cur];
+const fromFx  = (val, cur) => val / FX_RATES[cur];
+const fmt     = (usd, sym, cur) => `${sym}${Math.round(toFx(usd, cur)).toLocaleString("en-IN")}`;
+const fmtRate = (usd, sym, cur) => { const v = toFx(usd, cur); return `${sym}${v % 1 === 0 ? v.toFixed(0) : v.toFixed(2)}`; };
+const fmtP    = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+const r2      = (n) => parseFloat(n.toFixed(4));
 const calcWSR = (rate, margin) => parseFloat((rate / (1 - margin / 100)).toFixed(4));
 
-const initialRoles = [
+/* ═══════════════════════════════════════════════
+   DEFAULT DATA
+═══════════════════════════════════════════════ */
+const defaultRoles = [
   { id: 1, name: "SME", rate: 275, wsr: calcWSR(275, 30), hoursPerWeek: 40, weekAllocations: [0.1, 0.1, 0.1, 0.1] },
-  { id: 2, name: "BA", rate: 55, wsr: calcWSR(55, 30), hoursPerWeek: 40, weekAllocations: [0.5, 0.5, 0.5, 0.5] },
-  { id: 3, name: "QA", rate: 24, wsr: calcWSR(24, 30), hoursPerWeek: 40, weekAllocations: [1, 1, 1, 1] },
+  { id: 2, name: "BA",  rate: 55,  wsr: calcWSR(55,  30), hoursPerWeek: 40, weekAllocations: [0.5, 0.5, 0.5, 0.5] },
+  { id: 3, name: "QA",  rate: 24,  wsr: calcWSR(24,  30), hoursPerWeek: 40, weekAllocations: [1,   1,   1,   1  ] },
 ];
-
-let nextId = 4;
+let nextId = 10;
 
 function marginColor(margin, target, C) {
   if (margin >= target + 5) return C.success;
-  if (margin >= target) return C.accent2;
+  if (margin >= target)     return C.accent2;
   if (margin >= target - 5) return C.warning;
   return C.danger;
 }
 
 /* ═══════════════════════════════════════════════
-   REUSABLE UI COMPONENTS
+   CLAUDE API CALL
+═══════════════════════════════════════════════ */
+async function callClaude(apiKey, messages, maxTokens = 1500) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: maxTokens,
+      messages,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `API error ${res.status}`);
+  }
+  const data = await res.json();
+  return data.content?.[0]?.text || "";
+}
+
+/* ═══════════════════════════════════════════════
+   FILE → BASE64 helper
+═══════════════════════════════════════════════ */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+function fileToText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+/* ═══════════════════════════════════════════════
+   PARSE AI RESPONSE → roles array
+═══════════════════════════════════════════════ */
+function parseAIResponse(text) {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("No JSON found in AI response");
+  const data = JSON.parse(match[0]);
+  const roles = (data.roles || []).map((r, i) => ({
+    id: nextId++,
+    name: r.name || `Role ${i + 1}`,
+    rate: parseFloat(r.rate) || 50,
+    wsr:  parseFloat(r.wsr)  || calcWSR(parseFloat(r.rate) || 50, 30),
+    hoursPerWeek: parseInt(r.hoursPerWeek) || 40,
+    weekAllocations: Array.isArray(r.weekAllocations)
+      ? r.weekAllocations.map(v => Math.min(1, Math.max(0, parseFloat(v) || 0)))
+      : Array(parseInt(data.numWeeks) || 4).fill(1),
+  }));
+  return { roles, numWeeks: parseInt(data.numWeeks) || 4, projectType: data.projectType || "" };
+}
+
+/* ═══════════════════════════════════════════════
+   SHARED UI COMPONENTS
 ═══════════════════════════════════════════════ */
 function Badge({ children, color, size = 11 }) {
   return (
     <span style={{
       background: color + "22", color, border: `1px solid ${color}44`,
       borderRadius: 6, padding: "2px 8px", fontSize: size,
-      fontWeight: 700, letterSpacing: "0.05em", fontFamily: "monospace",
-      whiteSpace: "nowrap",
+      fontWeight: 700, letterSpacing: "0.05em", fontFamily: "monospace", whiteSpace: "nowrap",
     }}>{children}</span>
   );
 }
 
-// Raw numeric input — caller handles FX conversion
 function NumInput({ value, onChange, min = 0, step = 0.1, extraStyle = {}, C, highlight }) {
   return (
     <input type="number" value={value} min={min} step={step}
@@ -89,26 +140,18 @@ function NumInput({ value, onChange, min = 0, step = 0.1, extraStyle = {}, C, hi
         border: `1px solid ${highlight || C.border}`,
         borderRadius: 6, color: C.text, padding: "4px 8px",
         fontSize: 13, width: "100%", outline: "none", textAlign: "right",
-        fontFamily: "'JetBrains Mono', monospace", transition: "border 0.2s",
-        ...extraStyle,
+        fontFamily: "'JetBrains Mono', monospace", transition: "border 0.2s", ...extraStyle,
       }}
     />
   );
 }
 
-// Currency-aware rate input: displays in current currency, stores in USD
 function RateInput({ usdValue, onUsdChange, currency, C, highlight }) {
   const displayVal = parseFloat(toFx(usdValue, currency).toFixed(2));
   const step = currency === "INR" ? 10 : 0.5;
   return (
-    <NumInput
-      value={displayVal}
-      onChange={v => onUsdChange(r2(fromFx(v, currency)))}
-      step={step}
-      min={0}
-      C={C}
-      highlight={highlight}
-    />
+    <NumInput value={displayVal} onChange={v => onUsdChange(r2(fromFx(v, currency)))}
+      step={step} min={0} C={C} highlight={highlight} />
   );
 }
 
@@ -136,8 +179,7 @@ function IconBtn({ onClick, title, children, color, C }) {
         borderRadius: 6, color: hov ? col : C.muted,
         cursor: "pointer", padding: "4px 8px", fontSize: 14,
         transition: "all 0.15s", lineHeight: 1,
-      }}
-    >{children}</button>
+      }}>{children}</button>
   );
 }
 
@@ -152,26 +194,25 @@ function Btn({ onClick, children, accent, C }) {
         borderRadius: 8, color: hov ? (accent || C.accent) : C.muted,
         cursor: "pointer", padding: "7px 16px", fontSize: 13,
         fontFamily: "'Space Grotesk', sans-serif", transition: "all 0.15s",
-      }}
-    >{children}</button>
+      }}>{children}</button>
   );
 }
 
-function ApplyBtn({ onClick, children, C }) {
+function ApplyBtn({ onClick, children, C, disabled }) {
   const [hov, setHov] = useState(false);
   return (
-    <button onClick={onClick}
+    <button onClick={onClick} disabled={disabled}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
       style={{
-        background: hov
-          ? `linear-gradient(135deg, ${C.accent}, ${C.accent2})`
-          : `linear-gradient(135deg, ${C.accent}cc, ${C.accent2}cc)`,
-        border: "none", borderRadius: 8, color: "#fff",
-        cursor: "pointer", padding: "8px 18px", fontSize: 13, fontWeight: 700,
-        fontFamily: "'Space Grotesk', sans-serif", transition: "all 0.15s",
-        boxShadow: hov ? `0 4px 16px ${C.accent}55` : "none",
-      }}
-    >{children}</button>
+        background: disabled ? C.muted + "44"
+          : hov ? `linear-gradient(135deg,${C.accent},${C.accent2})`
+          : `linear-gradient(135deg,${C.accent}cc,${C.accent2}cc)`,
+        border: "none", borderRadius: 8, color: disabled ? C.muted : "#fff",
+        cursor: disabled ? "not-allowed" : "pointer",
+        padding: "10px 24px", fontSize: 14, fontWeight: 700,
+        fontFamily: "'Space Grotesk',sans-serif", transition: "all 0.15s",
+        boxShadow: (!disabled && hov) ? `0 4px 16px ${C.accent}55` : "none",
+      }}>{children}</button>
   );
 }
 
@@ -183,8 +224,7 @@ function ThemeToggle({ dark, setDark, C }) {
       border: `1px solid ${C.border}`, borderRadius: 20,
       cursor: "pointer", padding: "5px 14px 5px 10px",
       color: C.text, fontSize: 12, fontWeight: 600,
-      fontFamily: "'Space Grotesk', sans-serif",
-      transition: "all 0.25s", whiteSpace: "nowrap",
+      fontFamily: "'Space Grotesk',sans-serif", transition: "all 0.25s", whiteSpace: "nowrap",
     }}>
       <span style={{
         display: "inline-block", width: 34, height: 19,
@@ -205,26 +245,22 @@ function ThemeToggle({ dark, setDark, C }) {
 function CurrencyBar({ currency, setCurrency, C }) {
   return (
     <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-      {["USD", "EUR", "GBP", "INR"].map(c => {
+      {["USD","EUR","GBP","INR"].map(c => {
         const active = currency === c;
-        const isBase = c === "USD";
         return (
           <button key={c} onClick={() => setCurrency(c)} style={{
             background: active ? C.accent + "22" : "transparent",
             border: `1px solid ${active ? C.accent : C.border}`,
-            borderRadius: 6,
-            color: active ? C.accent : C.muted,
+            borderRadius: 6, color: active ? C.accent : C.muted,
             cursor: "pointer", padding: "4px 10px", fontSize: 12,
-            fontWeight: 600, transition: "all 0.15s",
-            position: "relative",
+            fontWeight: 600, transition: "all 0.15s", position: "relative",
           }}>
             {c}
-            {isBase && (
+            {c === "USD" && (
               <span style={{
                 position: "absolute", top: -5, right: -5,
-                background: C.accent2, color: "#fff",
-                fontSize: 8, fontWeight: 800,
-                borderRadius: 4, padding: "1px 3px", lineHeight: 1.4,
+                background: C.accent2, color: "#fff", fontSize: 8,
+                fontWeight: 800, borderRadius: 4, padding: "1px 3px", lineHeight: 1.4,
               }}>BASE</span>
             )}
           </button>
@@ -235,64 +271,39 @@ function CurrencyBar({ currency, setCurrency, C }) {
           fontSize: 10, color: C.muted, fontFamily: "monospace",
           background: C.surface, border: `1px solid ${C.border}`,
           borderRadius: 4, padding: "2px 6px", whiteSpace: "nowrap",
-        }}>
-          1 USD = {FX_RATES[currency]} {currency}
-        </span>
+        }}>1 USD = {FX_RATES[currency]} {currency}</span>
       )}
     </div>
   );
 }
 
-/* ═══════════════════════════════════════════════
-   TABLE STYLE HELPERS
-═══════════════════════════════════════════════ */
-const TH = (C, w, color) => ({
-  padding: "10px 10px", textAlign: "left", fontSize: 10, fontWeight: 700,
-  color: color || C.muted, letterSpacing: "0.08em", whiteSpace: "nowrap",
-  width: w, minWidth: w,
-});
-const TD = { padding: "7px 10px", verticalAlign: "middle" };
-
-/* ═══════════════════════════════════════════════
-   COLLAPSIBLE SECTION HEADER
-═══════════════════════════════════════════════ */
 function SectionHeader({ label, open, onToggle, badge, badgeColor, C }) {
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 10,
-      marginBottom: open ? 10 : 20,
-      paddingBottom: 8,
+      marginBottom: open ? 10 : 20, paddingBottom: 8,
       borderBottom: `1px solid ${C.border}`,
     }}>
       <button onClick={onToggle} style={{
         display: "flex", alignItems: "center", gap: 8,
-        background: "transparent", border: "none", cursor: "pointer",
-        padding: 0, color: C.text,
+        background: "transparent", border: "none", cursor: "pointer", padding: 0, color: C.text,
       }}>
         <span style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center",
           width: 20, height: 20, borderRadius: 5,
           background: open ? C.accent + "22" : C.surface,
           border: `1px solid ${open ? C.accent + "66" : C.border}`,
-          color: open ? C.accent : C.muted,
-          fontSize: 9, fontWeight: 900,
-          transition: "all 0.2s",
-          transform: open ? "none" : "none",
-          flexShrink: 0,
+          color: open ? C.accent : C.muted, fontSize: 9, fontWeight: 900, flexShrink: 0,
         }}>{open ? "▾" : "▸"}</span>
         <span style={{
           fontSize: 11, fontWeight: 800, letterSpacing: "0.1em",
-          color: open ? C.text : C.muted,
-          fontFamily: "'Space Grotesk',sans-serif",
-          transition: "color 0.2s",
+          color: open ? C.text : C.muted, fontFamily: "'Space Grotesk',sans-serif",
         }}>{label}</span>
       </button>
       {badge && (
         <span style={{
-          fontSize: 10, color: badgeColor || C.muted,
-          fontFamily: "monospace", fontWeight: 600,
-          background: (badgeColor || C.muted) + "18",
-          border: `1px solid ${(badgeColor || C.muted)}33`,
+          fontSize: 10, color: badgeColor || C.muted, fontFamily: "monospace", fontWeight: 600,
+          background: (badgeColor || C.muted) + "18", border: `1px solid ${(badgeColor || C.muted)}33`,
           borderRadius: 4, padding: "1px 7px",
         }}>{badge}</span>
       )}
@@ -301,134 +312,124 @@ function SectionHeader({ label, open, onToggle, badge, badgeColor, C }) {
   );
 }
 
+const TH = (C, w, color) => ({
+  padding: "10px 10px", textAlign: "left", fontSize: 10, fontWeight: 700,
+  color: color || C.muted, letterSpacing: "0.08em", whiteSpace: "nowrap", width: w, minWidth: w,
+});
+const TD = { padding: "7px 10px", verticalAlign: "middle" };
+
 /* ═══════════════════════════════════════════════
-   MARGIN ENGINE PANEL
-   — all logic in USD; only display converts
+   MARGIN ENGINE
 ═══════════════════════════════════════════════ */
 function MarginEngine({ roles, setRoles, targetMargin, setTargetMargin, stats, sym, currency, C }) {
   const [mode, setMode] = useState("wsr");
-
   const overallMargin = useMemo(() => {
-    const rev = stats.reduce((a, s) => a + s.revenue, 0);
+    const rev  = stats.reduce((a, s) => a + s.revenue, 0);
     const cost = stats.reduce((a, s) => a + s.cost, 0);
     return rev > 0 ? ((rev - cost) / rev) * 100 : 0;
   }, [stats]);
-
   const gap = overallMargin - targetMargin;
 
-  function applyToAll() {
-    setRoles(prev => prev.map(r => {
-      if (mode === "wsr") return { ...r, wsr: r2(r.rate / (1 - targetMargin / 100)) };
-      else return { ...r, rate: r2(r.wsr * (1 - targetMargin / 100)) };
-    }));
-  }
-
-  function applyToRole(id) {
-    setRoles(prev => prev.map(r => {
-      if (r.id !== id) return r;
-      if (mode === "wsr") return { ...r, wsr: r2(r.rate / (1 - targetMargin / 100)) };
-      else return { ...r, rate: r2(r.wsr * (1 - targetMargin / 100)) };
-    }));
-  }
+  const applyToAll = () => setRoles(prev => prev.map(r =>
+    mode === "wsr"
+      ? { ...r, wsr:  r2(r.rate / (1 - targetMargin / 100)) }
+      : { ...r, rate: r2(r.wsr  * (1 - targetMargin / 100)) }
+  ));
+  const applyToRole = (id) => setRoles(prev => prev.map(r => {
+    if (r.id !== id) return r;
+    return mode === "wsr"
+      ? { ...r, wsr:  r2(r.rate / (1 - targetMargin / 100)) }
+      : { ...r, rate: r2(r.wsr  * (1 - targetMargin / 100)) };
+  }));
 
   return (
     <div style={{
-      background: C.engineBg,
-      border: `1.5px solid ${C.accent}44`,
+      background: C.engineBg, border: `1.5px solid ${C.accent}44`,
       borderRadius: 14, padding: "20px 22px", marginBottom: 24,
       boxShadow: `0 0 0 1px ${C.accent}22, ${C.shadow}`,
     }}>
-      {/* header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 18 }}>🎯</span>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12, marginBottom:18 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <span style={{ fontSize:18 }}>🎯</span>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>Margin Engine</div>
-            <div style={{ fontSize: 11, color: C.muted }}>Set target · reverse-engineer WSR or CBR · all logic in USD</div>
+            <div style={{ fontWeight:700, fontSize:14, color:C.text }}>Margin Engine</div>
+            <div style={{ fontSize:11, color:C.muted }}>Set target · reverse-engineer WSR or CBR</div>
           </div>
         </div>
-
-        <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: C.muted, fontWeight: 600, letterSpacing: "0.06em", marginBottom: 2 }}>CURRENT</div>
-            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 20, fontWeight: 800, color: marginColor(overallMargin, targetMargin, C) }}>
+        <div style={{ display:"flex", gap:14, alignItems:"center", flexWrap:"wrap" }}>
+          <div style={{ textAlign:"center" }}>
+            <div style={{ fontSize:10, color:C.muted, fontWeight:600, letterSpacing:"0.06em", marginBottom:2 }}>CURRENT</div>
+            <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:20, fontWeight:800, color:marginColor(overallMargin,targetMargin,C) }}>
               {overallMargin.toFixed(1)}%
             </span>
           </div>
-          <div style={{ fontSize: 20, color: C.muted }}>→</div>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: C.muted, fontWeight: 600, letterSpacing: "0.06em", marginBottom: 2 }}>TARGET</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ fontSize:20, color:C.muted }}>→</div>
+          <div style={{ textAlign:"center" }}>
+            <div style={{ fontSize:10, color:C.muted, fontWeight:600, letterSpacing:"0.06em", marginBottom:2 }}>TARGET</div>
+            <div style={{ display:"flex", alignItems:"center", gap:4 }}>
               <input type="number" value={targetMargin} min={0} max={99} step={1}
-                onChange={e => setTargetMargin(parseFloat(e.target.value) || 0)}
+                onChange={e => setTargetMargin(parseFloat(e.target.value)||0)}
                 style={{
-                  background: C.inputBg, border: `2px solid ${C.accent}`,
-                  borderRadius: 8, color: C.accent, padding: "4px 8px",
-                  fontSize: 18, fontWeight: 800, width: 72, outline: "none",
-                  textAlign: "center", fontFamily: "'JetBrains Mono',monospace",
+                  background:C.inputBg, border:`2px solid ${C.accent}`,
+                  borderRadius:8, color:C.accent, padding:"4px 8px",
+                  fontSize:18, fontWeight:800, width:72, outline:"none",
+                  textAlign:"center", fontFamily:"'JetBrains Mono',monospace",
                 }}
               />
-              <span style={{ color: C.accent, fontSize: 18, fontWeight: 800 }}>%</span>
+              <span style={{ color:C.accent, fontSize:18, fontWeight:800 }}>%</span>
             </div>
           </div>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: C.muted, fontWeight: 600, letterSpacing: "0.06em", marginBottom: 2 }}>GAP</div>
-            <Badge color={gap >= 0 ? C.success : C.danger} size={14}>{fmtP(gap)}</Badge>
+          <div style={{ textAlign:"center" }}>
+            <div style={{ fontSize:10, color:C.muted, fontWeight:600, letterSpacing:"0.06em", marginBottom:2 }}>GAP</div>
+            <Badge color={gap>=0?C.success:C.danger} size={14}>{fmtP(gap)}</Badge>
           </div>
         </div>
       </div>
 
-      {/* mode + apply */}
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Solve for:</div>
+      <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+        <div style={{ fontSize:12, color:C.muted, fontWeight:600 }}>Solve for:</div>
         {[
-          { key: "wsr", label: "🔧 Adjust WSR", desc: "Keep CBR fixed" },
-          { key: "rate", label: "🔧 Adjust CBR", desc: "Keep WSR fixed" },
-        ].map(opt => (
-          <button key={opt.key} onClick={() => setMode(opt.key)} style={{
-            background: mode === opt.key ? C.accent + "22" : "transparent",
-            border: `1.5px solid ${mode === opt.key ? C.accent : C.border}`,
-            borderRadius: 8, color: mode === opt.key ? C.accent : C.muted,
-            cursor: "pointer", padding: "6px 14px", fontSize: 12, fontWeight: 600,
-            fontFamily: "'Space Grotesk',sans-serif", transition: "all 0.15s",
+          { key:"wsr", label:"🔧 Adjust WSR", desc:"Keep CBR fixed" },
+          { key:"rate",label:"🔧 Adjust CBR",  desc:"Keep WSR fixed" },
+        ].map(opt=>(
+          <button key={opt.key} onClick={()=>setMode(opt.key)} style={{
+            background: mode===opt.key ? C.accent+"22" : "transparent",
+            border:`1.5px solid ${mode===opt.key?C.accent:C.border}`,
+            borderRadius:8, color:mode===opt.key?C.accent:C.muted,
+            cursor:"pointer", padding:"6px 14px", fontSize:12, fontWeight:600,
+            fontFamily:"'Space Grotesk',sans-serif", transition:"all 0.15s",
           }}>
-            {opt.label}
-            <span style={{ fontSize: 10, marginLeft: 6, opacity: 0.7 }}>({opt.desc})</span>
+            {opt.label}<span style={{fontSize:10,marginLeft:6,opacity:0.7}}>({opt.desc})</span>
           </button>
         ))}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 11, color: C.muted }}>
-            {mode === "wsr"
-              ? `WSR = CBR ÷ (1 − ${targetMargin}%)`
-              : `CBR = WSR × (1 − ${targetMargin}%)`}
+        <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center" }}>
+          <span style={{ fontSize:11, color:C.muted }}>
+            {mode==="wsr" ? `WSR = CBR ÷ (1 − ${targetMargin}%)` : `CBR = WSR × (1 − ${targetMargin}%)`}
           </span>
           <ApplyBtn onClick={applyToAll} C={C}>Apply to All Roles →</ApplyBtn>
         </div>
       </div>
 
-      {/* per-role chips */}
-      <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {roles.map((r, i) => {
-          const s = stats[i];
-          const mc = marginColor(s.margin, targetMargin, C);
+      <div style={{ marginTop:14, display:"flex", gap:8, flexWrap:"wrap" }}>
+        {roles.map((r,i) => {
+          const s = stats[i]; const mc = marginColor(s.margin,targetMargin,C);
           return (
             <div key={r.id} style={{
-              background: C.card, border: `1px solid ${C.border}`, borderRadius: 8,
-              padding: "8px 12px", display: "flex", alignItems: "center", gap: 10,
-              flex: "1 1 170px",
+              background:C.card, border:`1px solid ${C.border}`, borderRadius:8,
+              padding:"8px 12px", display:"flex", alignItems:"center", gap:10, flex:"1 1 170px",
             }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 12, color: C.text }}>{r.name}</div>
-                <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace" }}>
-                  {fmtRate(r.rate, sym, currency)} CBR → {fmtRate(r.wsr, sym, currency)} WSR &nbsp;
-                  <span style={{ color: mc, fontWeight: 700 }}>{s.margin.toFixed(1)}%</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:12,color:C.text}}>{r.name}</div>
+                <div style={{fontSize:11,color:C.muted,fontFamily:"monospace"}}>
+                  {fmtRate(r.rate,sym,currency)} CBR → {fmtRate(r.wsr,sym,currency)} WSR &nbsp;
+                  <span style={{color:mc,fontWeight:700}}>{s.margin.toFixed(1)}%</span>
                 </div>
               </div>
-              <button onClick={() => applyToRole(r.id)} style={{
-                background: C.accent + "22", border: `1px solid ${C.accent}44`,
-                borderRadius: 6, color: C.accent, cursor: "pointer",
-                padding: "4px 10px", fontSize: 11, fontWeight: 600,
-                fontFamily: "'Space Grotesk',sans-serif", whiteSpace: "nowrap",
+              <button onClick={()=>applyToRole(r.id)} style={{
+                background:C.accent+"22", border:`1px solid ${C.accent}44`,
+                borderRadius:6, color:C.accent, cursor:"pointer",
+                padding:"4px 10px", fontSize:11, fontWeight:600,
+                fontFamily:"'Space Grotesk',sans-serif", whiteSpace:"nowrap",
               }}>Apply</button>
             </div>
           );
@@ -439,364 +440,853 @@ function MarginEngine({ roles, setRoles, targetMargin, setTargetMargin, stats, s
 }
 
 /* ═══════════════════════════════════════════════
-   MAIN COMPONENT
+   AI MARGIN COMMENTARY
 ═══════════════════════════════════════════════ */
-export default function ResourcePlanner() {
-  const [dark, setDark] = useState(true);
-  const C = THEMES[dark ? "dark" : "light"];
-  const [roles, setRoles] = useState(initialRoles);
-  const [numWeeks, setNumWeeks] = useState(4);
-  const [currency, setCurrency] = useState("USD");
-  const [weekLabels, setWeekLabels] = useState(["W1", "W2", "W3", "W4"]);
-  const [editLabel, setEditLabel] = useState(null);
-  const [sprintHours, setSH] = useState(40);
-  const [showSettings, setShowSet] = useState(false);
-  const [showEngine, setShowEngine] = useState(true);
-  const [showTable, setShowTable] = useState(true);
-  const [showBreakdown, setShowBreakdown] = useState(true);
-  const [targetMargin, setTM] = useState(30);
-  const sym = SYMBOLS[currency];
+function MarginCommentary({ roles, stats, totalCostUSD, totalRevenueUSD, overallMargin, targetMargin, sym, currency, apiKey, C }) {
+  const [commentary, setCommentary] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function changeWeeks(n) {
-    const nw = Math.max(1, Math.min(52, n));
-    setNumWeeks(nw);
-    setWeekLabels(p => { const a = [...p]; while (a.length < nw) a.push(`W${a.length + 1}`); return a.slice(0, nw); });
-    setRoles(p => p.map(r => {
-      const a = [...r.weekAllocations];
-      while (a.length < nw) a.push(a[a.length - 1] ?? 1);
-      return { ...r, weekAllocations: a.slice(0, nw) };
-    }));
+  async function generate() {
+    if (!apiKey) { setCommentary("⚠️ Please enter your Anthropic API key in the Intake page."); return; }
+    setLoading(true); setCommentary("");
+    try {
+      const summary = roles.map((r, i) => {
+        const s = stats[i];
+        return `${r.name}: CBR ${fmtRate(r.rate,"$","USD")}/h, WSR ${fmtRate(r.wsr,"$","USD")}/h, ${s.hours}h total, margin ${s.margin.toFixed(1)}%`;
+      }).join("\n");
+      const text = await callClaude(apiKey, [{
+        role: "user",
+        content: `You are a resource planning advisor. Analyse this project plan and give a concise 3-4 sentence plain English commentary. Focus on margin health, risks, and one actionable recommendation. Be direct, no fluff.\n\nTarget margin: ${targetMargin}%\nOverall margin: ${overallMargin.toFixed(1)}%\nTotal cost: $${Math.round(totalCostUSD)}\nTotal revenue: $${Math.round(totalRevenueUSD)}\n\nRole breakdown:\n${summary}`,
+      }], 600);
+      setCommentary(text);
+    } catch (e) { setCommentary(`❌ Error: ${e.message}`); }
+    setLoading(false);
   }
 
-  const upd = (id, f, v) => setRoles(p => p.map(r => r.id === id ? { ...r, [f]: v } : r));
-  const updW = (id, wi, v) => setRoles(p => p.map(r => {
-    if (r.id !== id) return r;
-    const a = [...r.weekAllocations]; a[wi] = v; return { ...r, weekAllocations: a };
-  }));
-  const addR = () => setRoles(p => [...p, {
-    id: nextId++, name: "New Role",
-    rate: fromFx(50, currency),          // store USD equivalent
-    wsr: fromFx(r2(50 / (1 - targetMargin / 100)), currency),
-    hoursPerWeek: sprintHours,
-    weekAllocations: Array(numWeeks).fill(1),
-  }]);
-  const delR = id => setRoles(p => p.filter(r => r.id !== id));
-  const fillW = (id, v) => setRoles(p => p.map(r => r.id === id ? { ...r, weekAllocations: Array(numWeeks).fill(v) } : r));
+  return (
+    <div style={{
+      background: C.engineBg, border: `1px solid ${C.border}`,
+      borderRadius: 12, padding: "16px 20px", marginBottom: 20,
+    }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: commentary ? 12 : 0 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <span style={{fontSize:16}}>💬</span>
+          <div>
+            <div style={{fontWeight:700,fontSize:13,color:C.text}}>AI Commentary</div>
+            <div style={{fontSize:11,color:C.muted}}>Plain English analysis of your numbers</div>
+          </div>
+        </div>
+        <button onClick={generate} disabled={loading} style={{
+          background: loading ? "transparent" : `linear-gradient(135deg,${C.accent}cc,${C.accent2}cc)`,
+          border: loading ? `1px solid ${C.border}` : "none",
+          borderRadius: 8, color: loading ? C.muted : "#fff",
+          cursor: loading ? "not-allowed" : "pointer",
+          padding: "7px 16px", fontSize: 12, fontWeight: 700,
+          fontFamily: "'Space Grotesk',sans-serif", transition: "all 0.15s",
+        }}>
+          {loading ? "⏳ Analysing..." : "✨ Generate"}
+        </button>
+      </div>
+      {commentary && (
+        <div style={{
+          background: C.card, border: `1px solid ${C.border}`,
+          borderRadius: 8, padding: "12px 16px", marginTop: 12,
+          fontSize: 13, lineHeight: 1.7, color: C.text,
+        }}>{commentary}</div>
+      )}
+    </div>
+  );
+}
 
-  // All stats computed in USD
-  const stats = useMemo(() => roles.map(r => {
-    const total = r.weekAllocations.slice(0, numWeeks).reduce((a, b) => a + b, 0);
-    const hours = total * (r.hoursPerWeek ?? sprintHours);
-    const cost = hours * r.rate;
-    const revenue = hours * r.wsr;
-    const margin = revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0;
-    return { total, hours, cost, revenue, margin };
-  }), [roles, numWeeks, sprintHours]);
+/* ═══════════════════════════════════════════════
+   SMART ROLE SUGGESTER
+═══════════════════════════════════════════════ */
+function RoleSuggester({ roles, setRoles, numWeeks, targetMargin, projectType, apiKey, C }) {
+  const [suggestions, setSuggestions] = useState(null);
+  const [loading, setLoading]         = useState(false);
+  const [projectDesc, setProjectDesc] = useState(projectType || "");
 
-  const totalCostUSD = stats.reduce((a, s) => a + s.cost, 0);
-  const totalRevenueUSD = stats.reduce((a, s) => a + s.revenue, 0);
-  const totalHours = stats.reduce((a, s) => a + s.hours, 0);
-  const overallMargin = totalRevenueUSD > 0 ? ((totalRevenueUSD - totalCostUSD) / totalRevenueUSD) * 100 : 0;
-  const BAR_COLORS = [C.accent, C.accent2, C.accent3, "#c084fc", "#f472b6"];
+  async function suggest() {
+    if (!apiKey) { alert("Please enter your Anthropic API key in the Intake page."); return; }
+    setLoading(true); setSuggestions(null);
+    try {
+      const existing = roles.map(r => r.name).join(", ");
+      const text = await callClaude(apiKey, [{
+        role: "user",
+        content: `You are a resource planning expert. For this project, suggest missing roles and flag any gaps. Return ONLY valid JSON, no other text.
+
+Project type: ${projectDesc || "software delivery project"}
+Existing roles: ${existing}
+Number of weeks: ${numWeeks}
+Target margin: ${targetMargin}%
+
+Return JSON format:
+{
+  "suggestions": [
+    { "name": "Role Name", "reason": "Why this role is needed", "rate": 60, "wsr": 85, "hoursPerWeek": 40, "weekAllocations": [0.5,0.5,0.5,0.5] }
+  ],
+  "gaps": ["gap 1", "gap 2"],
+  "observation": "one sentence overall observation"
+}`,
+      }], 800);
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) setSuggestions(JSON.parse(match[0]));
+    } catch (e) { alert(`Error: ${e.message}`); }
+    setLoading(false);
+  }
+
+  function addRole(s) {
+    setRoles(prev => [...prev, {
+      id: nextId++, name: s.name,
+      rate: parseFloat(s.rate) || 50,
+      wsr:  parseFloat(s.wsr)  || calcWSR(parseFloat(s.rate) || 50, targetMargin),
+      hoursPerWeek: parseInt(s.hoursPerWeek) || 40,
+      weekAllocations: Array.isArray(s.weekAllocations) ? s.weekAllocations : Array(numWeeks).fill(1),
+    }]);
+  }
+
+  return (
+    <div style={{
+      background: C.engineBg, border: `1px solid ${C.border}`,
+      borderRadius: 12, padding: "16px 20px", marginBottom: 20,
+    }}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+        <span style={{fontSize:16}}>🤖</span>
+        <div>
+          <div style={{fontWeight:700,fontSize:13,color:C.text}}>Smart Role Suggester</div>
+          <div style={{fontSize:11,color:C.muted}}>AI identifies missing roles for your project</div>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+        <input type="text" value={projectDesc} onChange={e=>setProjectDesc(e.target.value)}
+          placeholder="Describe your project (e.g. e-commerce migration, CRM rollout...)"
+          style={{
+            flex:1, minWidth:200, background:C.inputBg, border:`1px solid ${C.border}`,
+            borderRadius:8, color:C.text, padding:"8px 12px", fontSize:13,
+            outline:"none", fontFamily:"'Space Grotesk',sans-serif",
+          }}
+        />
+        <button onClick={suggest} disabled={loading} style={{
+          background: loading ? "transparent" : `linear-gradient(135deg,${C.accent}cc,${C.accent2}cc)`,
+          border: loading ? `1px solid ${C.border}` : "none",
+          borderRadius: 8, color: loading ? C.muted : "#fff",
+          cursor: loading ? "not-allowed" : "pointer",
+          padding: "8px 18px", fontSize: 12, fontWeight: 700,
+          fontFamily: "'Space Grotesk',sans-serif", whiteSpace:"nowrap",
+        }}>{loading ? "⏳ Thinking..." : "✨ Suggest Roles"}</button>
+      </div>
+
+      {suggestions && (
+        <div style={{marginTop:14}}>
+          {suggestions.observation && (
+            <div style={{
+              background:C.card, border:`1px solid ${C.border}`, borderRadius:8,
+              padding:"10px 14px", marginBottom:10, fontSize:12, color:C.text, lineHeight:1.6,
+            }}>💡 {suggestions.observation}</div>
+          )}
+          {suggestions.gaps?.length > 0 && (
+            <div style={{marginBottom:10,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{fontSize:11,color:C.muted,fontWeight:600}}>Gaps identified:</span>
+              {suggestions.gaps.map((g,i)=><Badge key={i} color={C.warning}>{g}</Badge>)}
+            </div>
+          )}
+          {suggestions.suggestions?.map((s,i)=>(
+            <div key={i} style={{
+              background:C.card, border:`1px solid ${C.border}`, borderRadius:8,
+              padding:"10px 14px", marginBottom:8,
+              display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
+            }}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:13,color:C.text}}>{s.name}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:2}}>{s.reason}</div>
+                <div style={{fontSize:11,color:C.muted,fontFamily:"monospace",marginTop:2}}>
+                  ${s.rate}/h CBR · ${s.wsr}/h WSR
+                </div>
+              </div>
+              <button onClick={()=>addRole(s)} style={{
+                background:C.accent2+"22", border:`1px solid ${C.accent2}44`,
+                borderRadius:6, color:C.accent2, cursor:"pointer",
+                padding:"6px 12px", fontSize:12, fontWeight:700,
+                fontFamily:"'Space Grotesk',sans-serif", whiteSpace:"nowrap",
+              }}>+ Add Role</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════
+   PAGE 1 — INTAKE
+═══════════════════════════════════════════════ */
+function IntakePage({ onLoad, onSkip, apiKey, setApiKey, dark, setDark, C }) {
+  const [activeTab, setActiveTab]   = useState("upload"); // "upload" | "paste"
+  const [file, setFile]             = useState(null);
+  const [pasteText, setPasteText]   = useState("");
+  const [projectDesc, setProjectDesc] = useState("");
+  const [loading, setLoading]       = useState(false);
+  const [error, setError]           = useState("");
+  const [dragOver, setDragOver]     = useState(false);
+  const fileRef                     = useRef();
+
+  const ACCEPTED = ".png,.jpg,.jpeg,.gif,.webp,.csv,.txt";
+
+  function handleFile(f) {
+    if (!f) return;
+    setFile(f); setError("");
+  }
+
+  function onDrop(e) {
+    e.preventDefault(); setDragOver(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) handleFile(f);
+  }
+
+  const isImage = file && file.type.startsWith("image/");
+  const isCsv   = file && (file.type.includes("csv") || file.type.includes("text") || file.name.endsWith(".csv") || file.name.endsWith(".txt"));
+
+  async function analyse() {
+    setError("");
+    if (!apiKey) { setError("Please enter your Anthropic API key below."); return; }
+    const hasContent = (activeTab === "upload" && file) || (activeTab === "paste" && pasteText.trim());
+    if (!hasContent) { setError("Please upload a file or paste your table first."); return; }
+    setLoading(true);
+    try {
+      const systemPrompt = `You are a resource planning data extractor. Extract role data and return ONLY valid JSON, no other text, no markdown fences.
+
+Return this exact format:
+{
+  "roles": [
+    {
+      "name": "Role Name",
+      "rate": 50,
+      "wsr": 71.43,
+      "hoursPerWeek": 40,
+      "weekAllocations": [0.5, 0.5, 0.5, 0.5]
+    }
+  ],
+  "numWeeks": 4,
+  "projectType": "brief description"
+}
+
+Rules:
+- rate = cost bill rate (CBR) per hour in USD. If currency is different, convert to USD approximately.
+- wsr = work standard rate per hour in USD. If not given, calculate as rate / 0.70 (30% margin).
+- weekAllocations = array of values 0-1 for each week showing what fraction of time this role works.
+- If week data not given, fill weekAllocations with 1 for each week.
+- If numWeeks not clear from data, use 4.
+- Extract as much as you can from the data provided.`;
+
+      let messages;
+      if (activeTab === "upload" && isImage) {
+        const b64 = await fileToBase64(file);
+        messages = [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: file.type, data: b64 } },
+            { type: "text", text: `${systemPrompt}\n\nExtract the resource planning data from this image. Project context: ${projectDesc || "not provided"}` },
+          ],
+        }];
+      } else {
+        const content = activeTab === "upload" ? await fileToText(file) : pasteText;
+        messages = [{
+          role: "user",
+          content: `${systemPrompt}\n\nExtract the resource planning data from this table/file content. Project context: ${projectDesc || "not provided"}\n\nData:\n${content}`,
+        }];
+      }
+
+      const text   = await callClaude(apiKey, messages, 1500);
+      const parsed = parseAIResponse(text);
+      if (!parsed.roles.length) throw new Error("No roles found in the data. Try a different format.");
+      onLoad(parsed, projectDesc);
+    } catch (e) {
+      setError(`❌ ${e.message}`);
+    }
+    setLoading(false);
+  }
+
+  const tabStyle = (active) => ({
+    flex: 1, padding: "10px", border: "none", cursor: "pointer",
+    background: active ? C.accent + "22" : "transparent",
+    borderBottom: `2px solid ${active ? C.accent : "transparent"}`,
+    color: active ? C.accent : C.muted, fontSize: 13, fontWeight: 600,
+    fontFamily: "'Space Grotesk',sans-serif", transition: "all 0.15s",
+  });
 
   return (
     <div style={{
       minHeight: "100vh", background: C.bg, color: C.text,
       fontFamily: "'Space Grotesk','Segoe UI',sans-serif",
-      padding: "28px 20px", transition: "background 0.25s,color 0.25s",
+      display: "flex", flexDirection: "column",
+      transition: "background 0.25s, color 0.25s",
     }}>
-      <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+      <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
 
-      {/* ── HEADER ── */}
-      <div style={{ marginBottom: 24, display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
-            <div style={{
-              width: 36, height: 36, borderRadius: 10, fontSize: 18,
-              background: `linear-gradient(135deg,${C.accent},${C.accent2})`,
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>⚡</div>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>Resource Effort PlannerV2.1</h1>
-          </div>
-          <p style={{ margin: 0, color: C.muted, fontSize: 13 }}>
-            Sprint-based cost & margin estimator · {numWeeks} weeks · {roles.length} roles
-            {currency !== "USD" && (
-              <span style={{ marginLeft: 8, color: C.accent, fontWeight: 600, fontFamily: "monospace", fontSize: 12 }}>
-                · All values in {currency} (1 USD = {FX_RATES[currency]} {currency})
-              </span>
-            )}
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <ThemeToggle dark={dark} setDark={setDark} C={C} />
-          <CurrencyBar currency={currency} setCurrency={setCurrency} C={C} />
-          <IconBtn onClick={() => setShowSet(s => !s)} title="Settings" color={C.accent} C={C}>⚙</IconBtn>
-        </div>
-      </div>
-
-      {/* ── SETTINGS ── */}
-      {showSettings && (
-        <div style={{
-          background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
-          padding: 20, marginBottom: 20, display: "flex", gap: 24, flexWrap: "wrap",
-          alignItems: "flex-end", boxShadow: C.shadow,
-        }}>
+      {/* top bar */}
+      <div style={{
+        padding: "16px 28px", display: "flex", alignItems: "center",
+        justifyContent: "space-between", borderBottom: `1px solid ${C.border}`,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 8, fontSize: 16,
+            background: `linear-gradient(135deg,${C.accent},${C.accent2})`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>⚡</div>
           <div>
-            <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: "0.06em", marginBottom: 6 }}>WEEKS</div>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <IconBtn onClick={() => changeWeeks(numWeeks - 1)} color={C.danger} C={C}>−</IconBtn>
-              <span style={{ fontFamily: "monospace", fontSize: 18, fontWeight: 700, minWidth: 28, textAlign: "center" }}>{numWeeks}</span>
-              <IconBtn onClick={() => changeWeeks(numWeeks + 1)} color={C.accent2} C={C}>+</IconBtn>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>Resource Effort Planner</div>
+            <div style={{ fontSize: 11, color: C.muted }}>
+              <span style={{
+                background: C.accent + "22", color: C.accent,
+                borderRadius: 4, padding: "1px 6px", fontSize: 10, fontWeight: 700, marginRight: 6,
+              }}>INTAKE</span>
+              Step 1 of 2 — Feed your data
             </div>
-          </div>
-          <div style={{ minWidth: 130 }}>
-            <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: "0.06em", marginBottom: 6 }}>DEFAULT HRS/WEEK</div>
-            <NumInput value={sprintHours} onChange={setSH} min={1} step={1} C={C} />
           </div>
         </div>
-      )}
-
-      {/* ── SUMMARY CARDS ── */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-        {[
-          { label: "Total Revenue", value: fmt(totalRevenueUSD, sym, currency), color: C.accent2, icon: "📈" },
-          { label: "Total Cost", value: fmt(totalCostUSD, sym, currency), color: C.accent3, icon: "💸" },
-          { label: "Overall Margin", value: `${overallMargin.toFixed(1)}%`, color: marginColor(overallMargin, targetMargin, C), icon: "🎯" },
-          { label: "Total Hours", value: `${totalHours.toLocaleString()}h`, color: C.accent, icon: "⏱" },
-          { label: "Roles", value: roles.length, color: C.muted, icon: "👥" },
-        ].map(card => (
-          <div key={card.label} style={{
-            background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
-            padding: "12px 18px", flex: "1 1 110px", minWidth: 110,
-            boxShadow: C.shadow, transition: "background 0.25s",
-          }}>
-            <div style={{ fontSize: 10, color: C.muted, fontWeight: 600, letterSpacing: "0.06em", marginBottom: 4 }}>
-              {card.icon} {card.label.toUpperCase()}
-            </div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: card.color, fontFamily: "'JetBrains Mono',monospace" }}>
-              {card.value}
-            </div>
-          </div>
-        ))}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <ThemeToggle dark={dark} setDark={setDark} C={C} />
+          <button onClick={onSkip} style={{
+            background: "transparent", border: `1px solid ${C.border}`,
+            borderRadius: 8, color: C.muted, cursor: "pointer",
+            padding: "7px 16px", fontSize: 12, fontFamily: "'Space Grotesk',sans-serif",
+          }}>Skip → Open blank planner</button>
+        </div>
       </div>
 
-      {/* ══ 1. RESOURCE LOADING ══════════════════════════════ */}
-      <SectionHeader
-        label="RESOURCE LOADING"
-        open={showTable}
-        onToggle={() => setShowTable(s => !s)}
-        badge={`${roles.length} roles · ${numWeeks} weeks`}
-        C={C}
-      />
-      {showTable && (<>
-        <div style={{
-          background: C.card, border: `1px solid ${C.border}`, borderRadius: 14,
-          overflow: "auto", marginBottom: 14, boxShadow: C.shadow,
-        }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>
-            <thead>
-              <tr style={{ background: C.surface }}>
-                <th style={TH(C, 150)}>ROLE</th>
-                <th style={TH(C, 90)}>CBR ({sym})</th>
-                <th style={TH(C, 90, C.accent2)}>WSR ({sym})</th>
-                <th style={TH(C, 76, marginColor(overallMargin, targetMargin, C))}>MARGIN %</th>
-                <th style={TH(C, 76)}>HRS/WK</th>
-                {weekLabels.map((w, i) => (
-                  <th key={i} style={TH(C, 66)}>
-                    {editLabel === i ? (
-                      <input autoFocus value={w}
-                        onChange={e => setWeekLabels(p => p.map((l, j) => j === i ? e.target.value : l))}
-                        onBlur={() => setEditLabel(null)}
-                        onKeyDown={e => e.key === "Enter" && setEditLabel(null)}
-                        style={{
-                          background: "transparent", border: "none", color: C.accent,
-                          width: 46, textAlign: "center", fontFamily: "'JetBrains Mono',monospace",
-                          fontSize: 11, fontWeight: 700, outline: `1px solid ${C.accent}`,
-                          borderRadius: 4, padding: "2px 4px",
-                        }}
-                      />
-                    ) : (
-                      <span style={{ cursor: "pointer", borderBottom: `1px dashed ${C.border}` }}
-                        title="Click to rename" onClick={() => setEditLabel(i)}>{w}</span>
-                    )}
-                  </th>
-                ))}
-                <th style={TH(C, 60, C.accent2)}>TOTAL</th>
-                <th style={TH(C, 66, C.accent)}>HOURS</th>
-                <th style={TH(C, 92, C.accent3)}>COST</th>
-                <th style={TH(C, 92, C.accent2)}>REVENUE</th>
-                <th style={TH(C, 44)}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {roles.map((role, ri) => {
-                const s = stats[ri];
-                const mc = marginColor(s.margin, targetMargin, C);
-                return (
-                  <tr key={role.id}
-                    style={{ borderTop: `1px solid ${C.border}`, transition: "background 0.1s" }}
-                    onMouseEnter={e => e.currentTarget.style.background = C.surface}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+      {/* main content */}
+      <div style={{
+        flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+        padding: "40px 20px",
+      }}>
+        <div style={{ width: "100%", maxWidth: 620 }}>
+
+          {/* hero text */}
+          <div style={{ textAlign: "center", marginBottom: 32 }}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>📊</div>
+            <h2 style={{ margin: "0 0 8px", fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em" }}>
+              Upload your resource data
+            </h2>
+            <p style={{ margin: 0, color: C.muted, fontSize: 14, lineHeight: 1.6 }}>
+              Upload an image, screenshot, or CSV — or paste a table directly.<br/>
+              AI will read it and pre-fill the planner for you.
+            </p>
+          </div>
+
+          {/* card */}
+          <div style={{
+            background: C.card, border: `1px solid ${C.border}`,
+            borderRadius: 16, boxShadow: C.shadow, overflow: "hidden",
+          }}>
+            {/* tabs */}
+            <div style={{ display: "flex", borderBottom: `1px solid ${C.border}` }}>
+              <button style={tabStyle(activeTab === "upload")} onClick={() => setActiveTab("upload")}>
+                📁 Upload File
+              </button>
+              <button style={tabStyle(activeTab === "paste")} onClick={() => setActiveTab("paste")}>
+                📋 Paste Table
+              </button>
+            </div>
+
+            <div style={{ padding: "24px" }}>
+              {/* UPLOAD TAB */}
+              {activeTab === "upload" && (
+                <div>
+                  <div
+                    onClick={() => fileRef.current?.click()}
+                    onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={onDrop}
+                    style={{
+                      border: `2px dashed ${dragOver ? C.accent : file ? C.accent2 : C.border}`,
+                      borderRadius: 12, padding: "32px 20px", textAlign: "center",
+                      cursor: "pointer", transition: "all 0.2s",
+                      background: dragOver ? C.accent + "08" : file ? C.accent2 + "08" : "transparent",
+                    }}
                   >
-                    <td style={TD}>
-                      <TextInput value={role.name} onChange={v => upd(role.id, "name", v)}
-                        extraStyle={{ fontWeight: 600, fontSize: 14 }} C={C} />
-                    </td>
-                    <td style={TD}>
-                      <RateInput usdValue={role.rate} onUsdChange={v => upd(role.id, "rate", v)} currency={currency} C={C} />
-                    </td>
-                    <td style={TD}>
-                      <RateInput usdValue={role.wsr} onUsdChange={v => upd(role.id, "wsr", v)} currency={currency} C={C} highlight={C.accent2} />
-                    </td>
-                    <td style={{ ...TD, textAlign: "center" }}>
-                      <Badge color={mc} size={12}>{s.margin.toFixed(1)}%</Badge>
-                    </td>
-                    <td style={TD}>
-                      <NumInput value={role.hoursPerWeek ?? sprintHours} onChange={v => upd(role.id, "hoursPerWeek", v)} step={1} min={1} C={C} />
-                    </td>
-                    {role.weekAllocations.slice(0, numWeeks).map((w, wi) => (
-                      <td key={wi} style={TD}>
-                        <NumInput value={w}
-                          onChange={v => updW(role.id, wi, Math.min(1, Math.max(0, v)))}
-                          step={0.1} C={C}
-                          extraStyle={{ color: w === 1 ? C.accent2 : w === 0 ? C.muted : C.text }}
-                        />
-                      </td>
-                    ))}
-                    <td style={{ ...TD, textAlign: "right" }}>
-                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: C.accent2, fontSize: 13 }}>
-                        {s.total.toFixed(1)}
-                      </span>
-                    </td>
-                    <td style={{ ...TD, textAlign: "right" }}>
-                      <span style={{ fontFamily: "'JetBrains Mono',monospace", color: C.accent, fontSize: 12 }}>
-                        {s.hours}h
-                      </span>
-                    </td>
-                    <td style={{ ...TD, textAlign: "right" }}>
-                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: C.accent3, fontSize: 13 }}>
-                        {fmt(s.cost, sym, currency)}
-                      </span>
-                    </td>
-                    <td style={{ ...TD, textAlign: "right" }}>
-                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: C.accent2, fontSize: 13 }}>
-                        {fmt(s.revenue, sym, currency)}
-                      </span>
-                    </td>
-                    <td style={TD}>
-                      <div style={{ display: "flex", gap: 2 }}>
-                        <IconBtn onClick={() => fillW(role.id, role.weekAllocations[0])} title="Fill all weeks" color={C.accent} C={C}>↔</IconBtn>
-                        <IconBtn onClick={() => delR(role.id)} title="Delete role" color={C.danger} C={C}>✕</IconBtn>
+                    <input ref={fileRef} type="file" accept={ACCEPTED} style={{ display: "none" }}
+                      onChange={e => handleFile(e.target.files?.[0])} />
+                    {file ? (
+                      <div>
+                        <div style={{ fontSize: 28, marginBottom: 8 }}>{isImage ? "🖼️" : "📄"}</div>
+                        <div style={{ fontWeight: 600, fontSize: 14, color: C.accent2 }}>{file.name}</div>
+                        <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>
+                          {(file.size / 1024).toFixed(1)} KB · Click to change
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr style={{ borderTop: `2px solid ${C.border}`, background: C.surface }}>
-                <td colSpan={4} style={{ ...TD, fontSize: 11, color: C.muted, fontWeight: 700, letterSpacing: "0.05em" }}>TOTALS</td>
-                <td colSpan={1 + numWeeks} style={TD} />
-                <td style={{ ...TD, textAlign: "right" }}>
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: C.accent2 }}>
-                    {stats.reduce((a, s) => a + s.total, 0).toFixed(1)}
-                  </span>
-                </td>
-                <td style={{ ...TD, textAlign: "right" }}>
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", color: C.accent, fontWeight: 700 }}>
-                    {totalHours}h
-                  </span>
-                </td>
-                <td style={{ ...TD, textAlign: "right" }}>
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, fontSize: 14, color: C.accent3 }}>
-                    {fmt(totalCostUSD, sym, currency)}
-                  </span>
-                </td>
-                <td style={{ ...TD, textAlign: "right" }}>
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 800, fontSize: 14, color: C.accent2 }}>
-                    {fmt(totalRevenueUSD, sym, currency)}
-                  </span>
-                </td>
-                <td style={TD} />
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+                    ) : (
+                      <div>
+                        <div style={{ fontSize: 32, marginBottom: 8 }}>⬆️</div>
+                        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>
+                          Drop your file here or click to browse
+                        </div>
+                        <div style={{ fontSize: 12, color: C.muted }}>
+                          Supports: PNG, JPG, GIF, WebP (screenshots) · CSV, TXT (data files)
+                        </div>
+                        <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
+                          💡 For Excel files, save as CSV first (File → Save As → CSV)
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
-        {/* actions sit inside the Resource Loading section */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 24 }}>
-          <button onClick={addR} style={{
-            background: `linear-gradient(135deg,${C.accent}22,${C.accent2}22)`,
-            border: `1px solid ${C.accent}`, color: C.accent, borderRadius: 8,
-            padding: "8px 18px", cursor: "pointer", fontSize: 13, fontWeight: 600,
-            fontFamily: "'Space Grotesk',sans-serif", display: "flex", alignItems: "center", gap: 6,
-          }}>+ Add Role</button>
-          <Btn onClick={() => changeWeeks(numWeeks + 1)} C={C} accent={C.accent2}>+ Add Week</Btn>
-          {numWeeks > 1 && <Btn onClick={() => changeWeeks(numWeeks - 1)} C={C} accent={C.danger}>− Remove Week</Btn>}
-          <span style={{ marginLeft: "auto", color: C.muted, fontSize: 12 }}>
-            💡 Click week headers to rename · ↔ fills all weeks · CBR & WSR auto-convert per currency
-          </span>
-        </div>
-      </>)}
+              {/* PASTE TAB */}
+              {activeTab === "paste" && (
+                <div>
+                  <div style={{ fontSize: 12, color: C.muted, marginBottom: 8 }}>
+                    Paste your table, copied from Excel, email, or any document:
+                  </div>
+                  <textarea
+                    value={pasteText}
+                    onChange={e => setPasteText(e.target.value)}
+                    placeholder={"Role\t%\tW1\tW2\tW3\tW4\tRate\nSME\t0.1\t0.1\t0.1\t0.1\t0.1\t275\nBA\t0.5\t0.5\t0.5\t0.5\t0.5\t55\nQA\t1\t1\t1\t1\t1\t24"}
+                    rows={8}
+                    style={{
+                      width: "100%", background: C.inputBg,
+                      border: `1px solid ${pasteText ? C.accent2 : C.border}`,
+                      borderRadius: 8, color: C.text, padding: "10px 12px",
+                      fontSize: 12, outline: "none", resize: "vertical",
+                      fontFamily: "'JetBrains Mono',monospace",
+                      boxSizing: "border-box", lineHeight: 1.6,
+                    }}
+                  />
+                </div>
+              )}
 
-      {/* ══ 2. MARGIN ENGINE ═════════════════════════════════ */}
-      <SectionHeader
-        label="MARGIN ENGINE"
-        open={showEngine}
-        onToggle={() => setShowEngine(s => !s)}
-        badge={`Target ${targetMargin}% · Current ${overallMargin.toFixed(1)}%`}
-        badgeColor={marginColor(overallMargin, targetMargin, C)}
-        C={C}
-      />
-      {showEngine && (
-        <MarginEngine
-          roles={roles} setRoles={setRoles}
-          targetMargin={targetMargin} setTargetMargin={setTM}
-          stats={stats} sym={sym} currency={currency} C={C}
-        />
-      )}
-
-      {/* ══ 3. ROLE BREAKDOWN ════════════════════════════════ */}
-      <SectionHeader
-        label="ROLE BREAKDOWN"
-        open={showBreakdown}
-        onToggle={() => setShowBreakdown(s => !s)}
-        badge={`${roles.length} roles`}
-        C={C}
-      />
-      {showBreakdown && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-          {roles.map((r, i) => {
-            const s = stats[i];
-            const revPct = totalRevenueUSD > 0 ? (s.revenue / totalRevenueUSD * 100).toFixed(1) : 0;
-            const col = BAR_COLORS[i % BAR_COLORS.length];
-            const mc = marginColor(s.margin, targetMargin, C);
-            return (
-              <div key={r.id} style={{
-                background: C.card, border: `1px solid ${C.border}`, borderRadius: 10,
-                padding: "12px 16px", flex: "1 1 160px", minWidth: 160, boxShadow: C.shadow,
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <span style={{ fontWeight: 700, fontSize: 14 }}>{r.name}</span>
-                  <Badge color={mc}>{s.margin.toFixed(1)}%</Badge>
+              {/* project description */}
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 12, color: C.muted, marginBottom: 6, fontWeight: 600 }}>
+                  Project type <span style={{ fontWeight: 400 }}>(optional — helps AI suggest roles)</span>
                 </div>
-                <div style={{ height: 4, background: C.border, borderRadius: 2, marginBottom: 8 }}>
-                  <div style={{ height: "100%", width: `${revPct}%`, background: col, borderRadius: 2, transition: "width 0.3s" }} />
-                </div>
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 15, fontWeight: 700, color: col }}>
-                  {fmt(s.revenue, sym, currency)}
-                </div>
-                <div style={{ fontSize: 11, color: C.muted, marginTop: 3, fontFamily: "monospace" }}>
-                  Cost {fmt(s.cost, sym, currency)} · {s.hours}h
-                </div>
-                <div style={{ fontSize: 11, color: C.muted, marginTop: 1, fontFamily: "monospace" }}>
-                  {fmtRate(r.rate, sym, currency)}/h CBR · {fmtRate(r.wsr, sym, currency)}/h WSR
-                </div>
+                <input type="text" value={projectDesc} onChange={e => setProjectDesc(e.target.value)}
+                  placeholder="e.g. e-commerce migration, CRM rollout, data warehouse..."
+                  style={{
+                    width: "100%", background: C.inputBg, border: `1px solid ${C.border}`,
+                    borderRadius: 8, color: C.text, padding: "8px 12px", fontSize: 13,
+                    outline: "none", fontFamily: "'Space Grotesk',sans-serif", boxSizing: "border-box",
+                  }}
+                />
               </div>
-            );
-          })}
+
+              {/* error */}
+              {error && (
+                <div style={{
+                  marginTop: 12, background: C.danger + "18", border: `1px solid ${C.danger}44`,
+                  borderRadius: 8, padding: "10px 14px", fontSize: 13, color: C.danger,
+                }}>{error}</div>
+              )}
+
+              {/* CTA */}
+              <div style={{ marginTop: 20, display: "flex", justifyContent: "center" }}>
+                <ApplyBtn onClick={analyse} disabled={loading} C={C}>
+                  {loading ? "⏳ AI is reading your data..." : "✨ Analyse & Load into Planner →"}
+                </ApplyBtn>
+              </div>
+            </div>
+          </div>
+
+          {/* API key */}
+          <div style={{
+            marginTop: 20, background: C.card, border: `1px solid ${C.border}`,
+            borderRadius: 12, padding: "16px 20px",
+          }}>
+            <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, fontWeight: 600 }}>
+              🔑 Anthropic API Key
+              <span style={{ fontWeight: 400, marginLeft: 6 }}>
+                — needed for AI features. Get one at{" "}
+                <a href="https://console.anthropic.com" target="_blank" rel="noreferrer"
+                  style={{ color: C.accent }}>console.anthropic.com</a>
+              </span>
+            </div>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              placeholder="sk-ant-..."
+              style={{
+                width: "100%", background: C.inputBg,
+                border: `1px solid ${apiKey ? C.accent2 : C.border}`,
+                borderRadius: 8, color: C.text, padding: "8px 12px", fontSize: 13,
+                outline: "none", fontFamily: "'JetBrains Mono',monospace", boxSizing: "border-box",
+              }}
+            />
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
+              🔒 Your key is never stored or sent anywhere except directly to Anthropic's API.
+            </div>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
+}
+
+/* ═══════════════════════════════════════════════
+   PAGE 2 — PLANNER
+═══════════════════════════════════════════════ */
+function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, projectType, apiKey, onBack, dark, setDark, C }) {
+  const [currency, setCurrency]       = useState("USD");
+  const [weekLabels, setWeekLabels]   = useState(() => Array.from({length: numWeeks}, (_,i) => `W${i+1}`));
+  const [editLabel, setEditLabel]     = useState(null);
+  const [sprintHours, setSH]          = useState(40);
+  const [showSettings, setShowSet]    = useState(false);
+  const [showTable, setShowTable]     = useState(true);
+  const [showEngine, setShowEngine]   = useState(true);
+  const [showBreakdown, setShowBreakdown] = useState(true);
+  const [showSuggester, setShowSuggester] = useState(false);
+  const [showCommentary, setShowCommentary] = useState(false);
+  const [targetMargin, setTM]         = useState(30);
+  const sym = SYMBOLS[currency];
+
+  function changeWeeks(n) {
+    const nw = Math.max(1, Math.min(52, n));
+    setNumWeeks(nw);
+    setWeekLabels(p => { const a=[...p]; while(a.length<nw) a.push(`W${a.length+1}`); return a.slice(0,nw); });
+    setRoles(p => p.map(r => {
+      const a=[...r.weekAllocations];
+      while(a.length<nw) a.push(a[a.length-1]??1);
+      return {...r, weekAllocations:a.slice(0,nw)};
+    }));
+  }
+
+  const upd  = (id,f,v) => setRoles(p=>p.map(r=>r.id===id?{...r,[f]:v}:r));
+  const updW = (id,wi,v) => setRoles(p=>p.map(r=>{
+    if(r.id!==id) return r; const a=[...r.weekAllocations]; a[wi]=v; return {...r,weekAllocations:a};
+  }));
+  const addR = () => setRoles(p=>[...p,{
+    id:nextId++, name:"New Role",
+    rate:fromFx(50,currency), wsr:fromFx(r2(50/(1-targetMargin/100)),currency),
+    hoursPerWeek:sprintHours, weekAllocations:Array(numWeeks).fill(1),
+  }]);
+  const delR  = id => setRoles(p=>p.filter(r=>r.id!==id));
+  const fillW = (id,v) => setRoles(p=>p.map(r=>r.id===id?{...r,weekAllocations:Array(numWeeks).fill(v)}:r));
+
+  const stats = useMemo(()=>roles.map(r=>{
+    const total=r.weekAllocations.slice(0,numWeeks).reduce((a,b)=>a+b,0);
+    const hours=total*(r.hoursPerWeek??sprintHours);
+    const cost=hours*r.rate; const revenue=hours*r.wsr;
+    return {total,hours,cost,revenue,margin:revenue>0?((revenue-cost)/revenue)*100:0};
+  }),[roles,numWeeks,sprintHours]);
+
+  const totalCostUSD    = stats.reduce((a,s)=>a+s.cost,0);
+  const totalRevenueUSD = stats.reduce((a,s)=>a+s.revenue,0);
+  const totalHours      = stats.reduce((a,s)=>a+s.hours,0);
+  const overallMargin   = totalRevenueUSD>0?((totalRevenueUSD-totalCostUSD)/totalRevenueUSD)*100:0;
+  const BAR_COLORS      = [C.accent,C.accent2,C.accent3,"#c084fc","#f472b6"];
+
+  return (
+    <div style={{
+      minHeight:"100vh", background:C.bg, color:C.text,
+      fontFamily:"'Space Grotesk','Segoe UI',sans-serif",
+      padding:"0", transition:"background 0.25s,color 0.25s",
+    }}>
+      <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+
+      {/* top bar */}
+      <div style={{
+        padding:"14px 24px", display:"flex", alignItems:"center",
+        justifyContent:"space-between", borderBottom:`1px solid ${C.border}`,
+        background:C.card, position:"sticky", top:0, zIndex:100, boxShadow:C.shadow,
+      }}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <button onClick={onBack} style={{
+            background:"transparent", border:`1px solid ${C.border}`,
+            borderRadius:8, color:C.muted, cursor:"pointer",
+            padding:"6px 12px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif",
+            display:"flex", alignItems:"center", gap:4,
+          }}>← Intake</button>
+          <div style={{width:1,height:24,background:C.border}}/>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{
+              width:28,height:28,borderRadius:7,fontSize:14,
+              background:`linear-gradient(135deg,${C.accent},${C.accent2})`,
+              display:"flex",alignItems:"center",justifyContent:"center",
+            }}>⚡</div>
+            <div>
+              <div style={{fontWeight:700,fontSize:14}}>Resource Effort Planner</div>
+              <div style={{fontSize:10,color:C.muted,display:"flex",alignItems:"center",gap:4}}>
+                <span style={{
+                  background:C.accent2+"22", color:C.accent2,
+                  borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:700,
+                }}>PLANNER</span>
+                {loadedFromAI && (
+                  <span style={{
+                    background:C.accent+"22", color:C.accent,
+                    borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:600,
+                  }}>✨ {roles.length} roles loaded from AI</span>
+                )}
+                {projectType && <span style={{color:C.muted}}>· {projectType}</span>}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <ThemeToggle dark={dark} setDark={setDark} C={C}/>
+          <CurrencyBar currency={currency} setCurrency={setCurrency} C={C}/>
+          <IconBtn onClick={()=>setShowSet(s=>!s)} title="Settings" color={C.accent} C={C}>⚙</IconBtn>
+        </div>
+      </div>
+
+      <div style={{padding:"24px 24px"}}>
+
+        {/* settings */}
+        {showSettings && (
+          <div style={{
+            background:C.card,border:`1px solid ${C.border}`,borderRadius:12,
+            padding:20,marginBottom:20,display:"flex",gap:24,flexWrap:"wrap",
+            alignItems:"flex-end",boxShadow:C.shadow,
+          }}>
+            <div>
+              <div style={{fontSize:11,color:C.muted,fontWeight:600,letterSpacing:"0.06em",marginBottom:6}}>WEEKS</div>
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                <IconBtn onClick={()=>changeWeeks(numWeeks-1)} color={C.danger} C={C}>−</IconBtn>
+                <span style={{fontFamily:"monospace",fontSize:18,fontWeight:700,minWidth:28,textAlign:"center"}}>{numWeeks}</span>
+                <IconBtn onClick={()=>changeWeeks(numWeeks+1)} color={C.accent2} C={C}>+</IconBtn>
+              </div>
+            </div>
+            <div style={{minWidth:130}}>
+              <div style={{fontSize:11,color:C.muted,fontWeight:600,letterSpacing:"0.06em",marginBottom:6}}>DEFAULT HRS/WEEK</div>
+              <NumInput value={sprintHours} onChange={setSH} min={1} step={1} C={C}/>
+            </div>
+          </div>
+        )}
+
+        {/* summary cards */}
+        <div style={{display:"flex",gap:10,marginBottom:20,flexWrap:"wrap"}}>
+          {[
+            {label:"Total Revenue",  value:fmt(totalRevenueUSD,sym,currency), color:C.accent2,  icon:"📈"},
+            {label:"Total Cost",     value:fmt(totalCostUSD,sym,currency),    color:C.accent3,  icon:"💸"},
+            {label:"Overall Margin", value:`${overallMargin.toFixed(1)}%`,    color:marginColor(overallMargin,targetMargin,C), icon:"🎯"},
+            {label:"Total Hours",    value:`${totalHours.toLocaleString()}h`, color:C.accent,   icon:"⏱"},
+            {label:"Roles",          value:roles.length,                       color:C.muted,    icon:"👥"},
+          ].map(card=>(
+            <div key={card.label} style={{
+              background:C.card,border:`1px solid ${C.border}`,borderRadius:12,
+              padding:"12px 18px",flex:"1 1 110px",minWidth:110,
+              boxShadow:C.shadow,transition:"background 0.25s",
+            }}>
+              <div style={{fontSize:10,color:C.muted,fontWeight:600,letterSpacing:"0.06em",marginBottom:4}}>
+                {card.icon} {card.label.toUpperCase()}
+              </div>
+              <div style={{fontSize:20,fontWeight:700,color:card.color,fontFamily:"'JetBrains Mono',monospace"}}>
+                {card.value}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* ═══ 1. RESOURCE LOADING ═══ */}
+        <SectionHeader label="RESOURCE LOADING" open={showTable} onToggle={()=>setShowTable(s=>!s)}
+          badge={`${roles.length} roles · ${numWeeks} weeks`} C={C}/>
+        {showTable && (<>
+          <div style={{
+            background:C.card,border:`1px solid ${C.border}`,borderRadius:14,
+            overflow:"auto",marginBottom:14,boxShadow:C.shadow,
+          }}>
+            <table style={{width:"100%",borderCollapse:"collapse",minWidth:820}}>
+              <thead>
+                <tr style={{background:C.surface}}>
+                  <th style={TH(C,150)}>ROLE</th>
+                  <th style={TH(C,90)}>CBR ({sym})</th>
+                  <th style={TH(C,90,C.accent2)}>WSR ({sym})</th>
+                  <th style={TH(C,76,marginColor(overallMargin,targetMargin,C))}>MARGIN %</th>
+                  <th style={TH(C,76)}>HRS/WK</th>
+                  {weekLabels.map((w,i)=>(
+                    <th key={i} style={TH(C,66)}>
+                      {editLabel===i?(
+                        <input autoFocus value={w}
+                          onChange={e=>setWeekLabels(p=>p.map((l,j)=>j===i?e.target.value:l))}
+                          onBlur={()=>setEditLabel(null)}
+                          onKeyDown={e=>e.key==="Enter"&&setEditLabel(null)}
+                          style={{
+                            background:"transparent",border:"none",color:C.accent,
+                            width:46,textAlign:"center",fontFamily:"'JetBrains Mono',monospace",
+                            fontSize:11,fontWeight:700,outline:`1px solid ${C.accent}`,
+                            borderRadius:4,padding:"2px 4px",
+                          }}
+                        />
+                      ):(
+                        <span style={{cursor:"pointer",borderBottom:`1px dashed ${C.border}`}}
+                          title="Click to rename" onClick={()=>setEditLabel(i)}>{w}</span>
+                      )}
+                    </th>
+                  ))}
+                  <th style={TH(C,60,C.accent2)}>TOTAL</th>
+                  <th style={TH(C,66,C.accent)}>HOURS</th>
+                  <th style={TH(C,92,C.accent3)}>COST</th>
+                  <th style={TH(C,92,C.accent2)}>REVENUE</th>
+                  <th style={TH(C,44)}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {roles.map((role,ri)=>{
+                  const s=stats[ri]; const mc=marginColor(s.margin,targetMargin,C);
+                  return (
+                    <tr key={role.id}
+                      style={{borderTop:`1px solid ${C.border}`,transition:"background 0.1s"}}
+                      onMouseEnter={e=>e.currentTarget.style.background=C.surface}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                    >
+                      <td style={TD}><TextInput value={role.name} onChange={v=>upd(role.id,"name",v)} extraStyle={{fontWeight:600,fontSize:14}} C={C}/></td>
+                      <td style={TD}><RateInput usdValue={role.rate} onUsdChange={v=>upd(role.id,"rate",v)} currency={currency} C={C}/></td>
+                      <td style={TD}><RateInput usdValue={role.wsr} onUsdChange={v=>upd(role.id,"wsr",v)} currency={currency} C={C} highlight={C.accent2}/></td>
+                      <td style={{...TD,textAlign:"center"}}><Badge color={mc} size={12}>{s.margin.toFixed(1)}%</Badge></td>
+                      <td style={TD}><NumInput value={role.hoursPerWeek??sprintHours} onChange={v=>upd(role.id,"hoursPerWeek",v)} step={1} min={1} C={C}/></td>
+                      {role.weekAllocations.slice(0,numWeeks).map((w,wi)=>(
+                        <td key={wi} style={TD}>
+                          <NumInput value={w} onChange={v=>updW(role.id,wi,Math.min(1,Math.max(0,v)))}
+                            step={0.1} C={C} extraStyle={{color:w===1?C.accent2:w===0?C.muted:C.text}}/>
+                        </td>
+                      ))}
+                      <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:C.accent2,fontSize:13}}>{s.total.toFixed(1)}</span></td>
+                      <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",color:C.accent,fontSize:12}}>{s.hours}h</span></td>
+                      <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,color:C.accent3,fontSize:13}}>{fmt(s.cost,sym,currency)}</span></td>
+                      <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:C.accent2,fontSize:13}}>{fmt(s.revenue,sym,currency)}</span></td>
+                      <td style={TD}>
+                        <div style={{display:"flex",gap:2}}>
+                          <IconBtn onClick={()=>fillW(role.id,role.weekAllocations[0])} title="Fill all weeks" color={C.accent} C={C}>↔</IconBtn>
+                          <IconBtn onClick={()=>delR(role.id)} title="Delete role" color={C.danger} C={C}>✕</IconBtn>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{borderTop:`2px solid ${C.border}`,background:C.surface}}>
+                  <td colSpan={4} style={{...TD,fontSize:11,color:C.muted,fontWeight:700,letterSpacing:"0.05em"}}>TOTALS</td>
+                  <td colSpan={1+numWeeks} style={TD}/>
+                  <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:C.accent2}}>{stats.reduce((a,s)=>a+s.total,0).toFixed(1)}</span></td>
+                  <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",color:C.accent,fontWeight:700}}>{totalHours}h</span></td>
+                  <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:14,color:C.accent3}}>{fmt(totalCostUSD,sym,currency)}</span></td>
+                  <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:14,color:C.accent2}}>{fmt(totalRevenueUSD,sym,currency)}</span></td>
+                  <td style={TD}/>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:24}}>
+            <button onClick={addR} style={{
+              background:`linear-gradient(135deg,${C.accent}22,${C.accent2}22)`,
+              border:`1px solid ${C.accent}`,color:C.accent,borderRadius:8,
+              padding:"8px 18px",cursor:"pointer",fontSize:13,fontWeight:600,
+              fontFamily:"'Space Grotesk',sans-serif",display:"flex",alignItems:"center",gap:6,
+            }}>+ Add Role</button>
+            <Btn onClick={()=>changeWeeks(numWeeks+1)} C={C} accent={C.accent2}>+ Add Week</Btn>
+            {numWeeks>1&&<Btn onClick={()=>changeWeeks(numWeeks-1)} C={C} accent={C.danger}>− Remove Week</Btn>}
+            <span style={{marginLeft:"auto",color:C.muted,fontSize:12}}>
+              💡 Click week headers to rename · ↔ fills all weeks
+            </span>
+          </div>
+        </>)}
+
+        {/* ═══ 2. MARGIN ENGINE ═══ */}
+        <SectionHeader label="MARGIN ENGINE" open={showEngine} onToggle={()=>setShowEngine(s=>!s)}
+          badge={`Target ${targetMargin}% · Current ${overallMargin.toFixed(1)}%`}
+          badgeColor={marginColor(overallMargin,targetMargin,C)} C={C}/>
+        {showEngine && (
+          <MarginEngine roles={roles} setRoles={setRoles}
+            targetMargin={targetMargin} setTargetMargin={setTM}
+            stats={stats} sym={sym} currency={currency} C={C}/>
+        )}
+
+        {/* ═══ 3. ROLE BREAKDOWN ═══ */}
+        <SectionHeader label="ROLE BREAKDOWN" open={showBreakdown} onToggle={()=>setShowBreakdown(s=>!s)}
+          badge={`${roles.length} roles`} C={C}/>
+        {showBreakdown && (
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+            {roles.map((r,i)=>{
+              const s=stats[i];
+              const revPct=totalRevenueUSD>0?(s.revenue/totalRevenueUSD*100).toFixed(1):0;
+              const col=BAR_COLORS[i%BAR_COLORS.length];
+              const mc=marginColor(s.margin,targetMargin,C);
+              return (
+                <div key={r.id} style={{
+                  background:C.card,border:`1px solid ${C.border}`,borderRadius:10,
+                  padding:"12px 16px",flex:"1 1 160px",minWidth:160,boxShadow:C.shadow,
+                }}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <span style={{fontWeight:700,fontSize:14}}>{r.name}</span>
+                    <Badge color={mc}>{s.margin.toFixed(1)}%</Badge>
+                  </div>
+                  <div style={{height:4,background:C.border,borderRadius:2,marginBottom:8}}>
+                    <div style={{height:"100%",width:`${revPct}%`,background:col,borderRadius:2,transition:"width 0.3s"}}/>
+                  </div>
+                  <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:15,fontWeight:700,color:col}}>
+                    {fmt(s.revenue,sym,currency)}
+                  </div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:3,fontFamily:"monospace"}}>
+                    Cost {fmt(s.cost,sym,currency)} · {s.hours}h
+                  </div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:1,fontFamily:"monospace"}}>
+                    {fmtRate(r.rate,sym,currency)}/h CBR · {fmtRate(r.wsr,sym,currency)}/h WSR
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ═══ AI TOOLS ═══ */}
+        <SectionHeader label="AI TOOLS" open={showSuggester||showCommentary}
+          onToggle={()=>{ setShowSuggester(s=>!s); setShowCommentary(s=>!s); }}
+          badge="Role Suggester · Margin Commentary" badgeColor={C.accent} C={C}/>
+
+        <SectionHeader label="SMART ROLE SUGGESTER" open={showSuggester}
+          onToggle={()=>setShowSuggester(s=>!s)} C={C}/>
+        {showSuggester && (
+          <RoleSuggester roles={roles} setRoles={setRoles} numWeeks={numWeeks}
+            targetMargin={targetMargin} projectType={projectType} apiKey={apiKey} C={C}/>
+        )}
+
+        <SectionHeader label="AI MARGIN COMMENTARY" open={showCommentary}
+          onToggle={()=>setShowCommentary(s=>!s)} C={C}/>
+        {showCommentary && (
+          <MarginCommentary
+            roles={roles} stats={stats}
+            totalCostUSD={totalCostUSD} totalRevenueUSD={totalRevenueUSD}
+            overallMargin={overallMargin} targetMargin={targetMargin}
+            sym={sym} currency={currency} apiKey={apiKey} C={C}/>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════
+   ROOT APP — controls which page is shown
+═══════════════════════════════════════════════ */
+export default function App() {
+  const [dark, setDark]           = useState(true);
+  const C                          = THEMES[dark ? "dark" : "light"];
+  const [page, setPage]           = useState("intake");
+  const [roles, setRoles]         = useState(defaultRoles);
+  const [numWeeks, setNumWeeks]   = useState(4);
+  const [loadedFromAI, setLoaded] = useState(false);
+  const [projectType, setPT]      = useState("");
+  const [apiKey, setApiKey]       = useState("");
+
+  function handleLoad({ roles: r, numWeeks: nw, projectType: pt }) {
+    setRoles(r); setNumWeeks(nw); setPT(pt);
+    setLoaded(true); setPage("planner");
+  }
+
+  function handleSkip() {
+    setRoles(defaultRoles); setNumWeeks(4);
+    setLoaded(false); setPage("planner");
+  }
+
+  if (page === "intake") {
+    return <IntakePage onLoad={handleLoad} onSkip={handleSkip}
+      apiKey={apiKey} setApiKey={setApiKey} dark={dark} setDark={setDark} C={C}/>;
+  }
+
+  return <PlannerPage roles={roles} setRoles={setRoles}
+    numWeeks={numWeeks} setNumWeeks={setNumWeeks}
+    loadedFromAI={loadedFromAI} projectType={projectType}
+    apiKey={apiKey} onBack={()=>setPage("intake")}
+    dark={dark} setDark={setDark} C={C}/>;
 }
