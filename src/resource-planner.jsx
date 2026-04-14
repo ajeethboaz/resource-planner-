@@ -1207,7 +1207,17 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
         justifyContent:"space-between", borderBottom:`1px solid ${C.border}`,
         background:C.card, position:"sticky", top:0, zIndex:100, boxShadow:C.shadow,
       }}>
-        <div style={{display:"flex",alignItems:"center",gap:9}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={onBack} style={{
+            background:"transparent", border:`1px solid ${C.border}`,
+            borderRadius:8, color:C.muted, cursor:"pointer",
+            padding:"5px 12px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif",
+            display:"flex", alignItems:"center", gap:5, transition:"all 0.15s",
+          }}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent;e.currentTarget.style.color=C.accent;}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.muted;}}
+          >← Intake</button>
+          <div style={{width:1,height:22,background:C.border}}/>
           <div style={{
             width:28,height:28,borderRadius:7,fontSize:14,
             background:`linear-gradient(135deg,${C.accent},${C.accent2})`,
