@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef } from "react";
 
 /* ═══════════════════════════════════════════════
    THEMES
@@ -64,11 +64,7 @@ async function callClaude(apiKey, messages, maxTokens = 1500) {
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true",
     },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: maxTokens,
-      messages,
-    }),
+    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, messages }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -79,7 +75,7 @@ async function callClaude(apiKey, messages, maxTokens = 1500) {
 }
 
 /* ═══════════════════════════════════════════════
-   FILE → BASE64 helper
+   FILE HELPERS
 ═══════════════════════════════════════════════ */
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -99,7 +95,7 @@ function fileToText(file) {
 }
 
 /* ═══════════════════════════════════════════════
-   PARSE AI RESPONSE → roles array
+   PARSE AI RESPONSE
 ═══════════════════════════════════════════════ */
 function parseAIResponse(text) {
   const match = text.match(/\{[\s\S]*\}/);
@@ -385,7 +381,6 @@ function MarginEngine({ roles, setRoles, targetMargin, setTargetMargin, stats, s
           </div>
         </div>
       </div>
-
       <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
         <div style={{ fontSize:12, color:C.muted, fontWeight:600 }}>Solve for:</div>
         {[
@@ -409,7 +404,6 @@ function MarginEngine({ roles, setRoles, targetMargin, setTargetMargin, stats, s
           <ApplyBtn onClick={applyToAll} C={C}>Apply to All Roles →</ApplyBtn>
         </div>
       </div>
-
       <div style={{ marginTop:14, display:"flex", gap:8, flexWrap:"wrap" }}>
         {roles.map((r,i) => {
           const s = stats[i]; const mc = marginColor(s.margin,targetMargin,C);
@@ -575,7 +569,6 @@ Return JSON format:
           fontFamily: "'Space Grotesk',sans-serif", whiteSpace:"nowrap",
         }}>{loading ? "⏳ Thinking..." : "✨ Suggest Roles"}</button>
       </div>
-
       {suggestions && (
         <div style={{marginTop:14}}>
           {suggestions.observation && (
@@ -618,39 +611,59 @@ Return JSON format:
 }
 
 /* ═══════════════════════════════════════════════
-   PAGE 1 — INTAKE
+   PAGE 1 — INTAKE (always light mode)
 ═══════════════════════════════════════════════ */
-function IntakePage({ onLoad, onSkip, apiKey, setApiKey, dark, setDark, C }) {
-  const [activeTab, setActiveTab]   = useState("upload"); // "upload" | "paste"
-  const [file, setFile]             = useState(null);
-  const [pasteText, setPasteText]   = useState("");
+const FILE_TYPE_BADGES = [
+  { ext: "PNG", label: "Image", bg: "#fff8e6", color: "#d97706" },
+  { ext: "JPG", label: "Image", bg: "#fef0f0", color: "#dc2626" },
+  { ext: "GIF", label: "Image", bg: "#fdf4ff", color: "#9333ea" },
+  null,
+  { ext: "CSV", label: "Data",  bg: "#edfff6", color: "#059669" },
+  { ext: "TXT", label: "Data",  bg: "#f0f4ff", color: "#4f46e5" },
+];
+const EXT_COLORS = {
+  png:  { bg: "#fff8e6", color: "#d97706" },
+  jpg:  { bg: "#fef0f0", color: "#dc2626" },
+  jpeg: { bg: "#fef0f0", color: "#dc2626" },
+  gif:  { bg: "#fdf4ff", color: "#9333ea" },
+  webp: { bg: "#f0f4ff", color: "#4f46e5" },
+  csv:  { bg: "#edfff6", color: "#059669" },
+  txt:  { bg: "#f0f4ff", color: "#4f46e5" },
+};
+
+// Intake always uses light palette — dark toggle only affects the planner
+const IL = THEMES.light;
+
+function IntakePage({ onLoad, onSkip, apiKey, setApiKey, dark, setDark }) {
+  const [file, setFile]               = useState(null);
+  const [pasteText, setPasteText]     = useState("");
   const [projectDesc, setProjectDesc] = useState("");
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState("");
-  const [dragOver, setDragOver]     = useState(false);
-  const fileRef                     = useRef();
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState("");
+  const [dragOver, setDragOver]       = useState(false);
+  const fileRef                       = useRef();
 
   const ACCEPTED = ".png,.jpg,.jpeg,.gif,.webp,.csv,.txt";
 
-  function handleFile(f) {
-    if (!f) return;
-    setFile(f); setError("");
-  }
-
+  function handleFile(f) { if (!f) return; setFile(f); setError(""); }
   function onDrop(e) {
     e.preventDefault(); setDragOver(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) handleFile(f);
+    const f = e.dataTransfer.files?.[0]; if (f) handleFile(f);
   }
 
-  const isImage = file && file.type.startsWith("image/");
-  const isCsv   = file && (file.type.includes("csv") || file.type.includes("text") || file.name.endsWith(".csv") || file.name.endsWith(".txt"));
+  const isImage  = file && file.type.startsWith("image/");
+  const fileExt  = file ? file.name.split(".").pop().toLowerCase() : "";
+  const fileClr  = EXT_COLORS[fileExt] || { bg: "#f1f5f9", color: "#64748b" };
+  const fileSize = file
+    ? (file.size > 1048576 ? (file.size / 1048576).toFixed(1) + " MB" : Math.round(file.size / 1024) + " KB")
+    : "";
+
+  const canSubmit = !!file || pasteText.trim().length > 0;
 
   async function analyse() {
     setError("");
     if (!apiKey) { setError("Please enter your Anthropic API key below."); return; }
-    const hasContent = (activeTab === "upload" && file) || (activeTab === "paste" && pasteText.trim());
-    if (!hasContent) { setError("Please upload a file or paste your table first."); return; }
+    if (!canSubmit) { setError("Please upload a file or paste your table first."); return; }
     setLoading(true);
     try {
       const systemPrompt = `You are a resource planning data extractor. Extract role data and return ONLY valid JSON, no other text, no markdown fences.
@@ -658,265 +671,254 @@ function IntakePage({ onLoad, onSkip, apiKey, setApiKey, dark, setDark, C }) {
 Return this exact format:
 {
   "roles": [
-    {
-      "name": "Role Name",
-      "rate": 50,
-      "wsr": 71.43,
-      "hoursPerWeek": 40,
-      "weekAllocations": [0.5, 0.5, 0.5, 0.5]
-    }
+    { "name": "Role Name", "rate": 50, "wsr": 71.43, "hoursPerWeek": 40, "weekAllocations": [0.5,0.5,0.5,0.5] }
   ],
   "numWeeks": 4,
   "projectType": "brief description"
 }
 
 Rules:
-- rate = cost bill rate (CBR) per hour in USD. If currency is different, convert to USD approximately.
-- wsr = work standard rate per hour in USD. If not given, calculate as rate / 0.70 (30% margin).
-- weekAllocations = array of values 0-1 for each week showing what fraction of time this role works.
+- rate = CBR per hour in USD. Convert if needed.
+- wsr = WSR per hour in USD. If not given, calculate as rate / 0.70.
+- weekAllocations = array of 0-1 values per week.
 - If week data not given, fill weekAllocations with 1 for each week.
-- If numWeeks not clear from data, use 4.
-- Extract as much as you can from the data provided.`;
+- If numWeeks not clear, use 4.`;
 
       let messages;
-      if (activeTab === "upload" && isImage) {
+      if (file && isImage) {
         const b64 = await fileToBase64(file);
-        messages = [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: file.type, data: b64 } },
-            { type: "text", text: `${systemPrompt}\n\nExtract the resource planning data from this image. Project context: ${projectDesc || "not provided"}` },
-          ],
-        }];
+        messages = [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: file.type, data: b64 } },
+          { type: "text", text: `${systemPrompt}\n\nExtract from this image. Project context: ${projectDesc || "not provided"}` },
+        ]}];
       } else {
-        const content = activeTab === "upload" ? await fileToText(file) : pasteText;
-        messages = [{
-          role: "user",
-          content: `${systemPrompt}\n\nExtract the resource planning data from this table/file content. Project context: ${projectDesc || "not provided"}\n\nData:\n${content}`,
-        }];
+        const content = file ? await fileToText(file) : pasteText;
+        messages = [{ role: "user", content: `${systemPrompt}\n\nExtract from this data. Project context: ${projectDesc || "not provided"}\n\nData:\n${content}` }];
       }
 
       const text   = await callClaude(apiKey, messages, 1500);
       const parsed = parseAIResponse(text);
-      if (!parsed.roles.length) throw new Error("No roles found in the data. Try a different format.");
+      if (!parsed.roles.length) throw new Error("No roles found. Try a different format.");
       onLoad(parsed, projectDesc);
-    } catch (e) {
-      setError(`❌ ${e.message}`);
-    }
+    } catch (e) { setError(`❌ ${e.message}`); }
     setLoading(false);
   }
 
-  const tabStyle = (active) => ({
-    flex: 1, padding: "10px", border: "none", cursor: "pointer",
-    background: active ? C.accent + "22" : "transparent",
-    borderBottom: `2px solid ${active ? C.accent : "transparent"}`,
-    color: active ? C.accent : C.muted, fontSize: 13, fontWeight: 600,
-    fontFamily: "'Space Grotesk',sans-serif", transition: "all 0.15s",
-  });
-
   return (
     <div style={{
-      minHeight: "100vh", background: C.bg, color: C.text,
+      minHeight: "100vh", background: "#dde8f2", color: IL.text,
       fontFamily: "'Space Grotesk','Segoe UI',sans-serif",
       display: "flex", flexDirection: "column",
-      transition: "background 0.25s, color 0.25s",
     }}>
       <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
 
-      {/* top bar */}
+      {/* ── Top bar ── */}
       <div style={{
-        padding: "16px 28px", display: "flex", alignItems: "center",
-        justifyContent: "space-between", borderBottom: `1px solid ${C.border}`,
+        background: "#1a3356", padding: "12px 24px",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{
-            width: 32, height: 32, borderRadius: 8, fontSize: 16,
-            background: `linear-gradient(135deg,${C.accent},${C.accent2})`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>⚡</div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 15 }}>Resource Effort Planner</div>
-            <div style={{ fontSize: 11, color: C.muted }}>
-              <span style={{
-                background: C.accent + "22", color: C.accent,
-                borderRadius: 4, padding: "1px 6px", fontSize: 10, fontWeight: 700, marginRight: 6,
-              }}>INTAKE</span>
-              Step 1 of 2 — Feed your data
-            </div>
+            width: 30, height: 30, borderRadius: 8,
+            background: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <rect x="1" y="8" width="4" height="8" rx="1" fill="#4caf7d"/>
+              <rect x="7" y="5" width="4" height="11" rx="1" fill="#e8453c"/>
+              <rect x="13" y="2" width="4" height="14" rx="1" fill="#2196f3"/>
+            </svg>
           </div>
+          <span style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>Resource Effort Planner</span>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <ThemeToggle dark={dark} setDark={setDark} C={C} />
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <ThemeToggle dark={dark} setDark={setDark} C={IL}/>
           <button onClick={onSkip} style={{
-            background: "transparent", border: `1px solid ${C.border}`,
-            borderRadius: 8, color: C.muted, cursor: "pointer",
-            padding: "7px 16px", fontSize: 12, fontFamily: "'Space Grotesk',sans-serif",
+            background: "transparent", border: "1px solid rgba(255,255,255,0.2)",
+            borderRadius: 8, color: "#8aaac4", cursor: "pointer",
+            padding: "6px 14px", fontSize: 12, fontFamily: "'Space Grotesk',sans-serif",
           }}>Skip → Open blank planner</button>
         </div>
       </div>
 
-      {/* main content */}
+      {/* ── Content ── */}
       <div style={{
         flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
-        padding: "40px 20px",
+        padding: "36px 20px",
       }}>
         <div style={{ width: "100%", maxWidth: 620 }}>
 
-          {/* hero text */}
-          <div style={{ textAlign: "center", marginBottom: 32 }}>
-            <div style={{ fontSize: 36, marginBottom: 8 }}>📊</div>
-            <h2 style={{ margin: "0 0 8px", fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em" }}>
-              Upload your resource data
-            </h2>
-            <p style={{ margin: 0, color: C.muted, fontSize: 14, lineHeight: 1.6 }}>
-              Upload an image, screenshot, or CSV — or paste a table directly.<br/>
-              AI will read it and pre-fill the planner for you.
-            </p>
+          {/* Side by side zones */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+
+            {/* Drop zone */}
+            <div
+              onClick={() => !file && fileRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              style={{
+                background: "#fff",
+                border: `2px ${file ? "solid" : "dashed"} ${dragOver ? "#3b82f6" : file ? "#059669" : "#c5d6e8"}`,
+                borderRadius: 16, padding: "24px 16px",
+                display: "flex", flexDirection: "column", alignItems: "center",
+                justifyContent: "center", gap: 16,
+                cursor: file ? "default" : "pointer",
+                transition: "all 0.15s",
+                background: dragOver ? "#f0f8ff" : file ? "#f0fdf8" : "#fff",
+                minHeight: 200,
+              }}
+            >
+              <input ref={fileRef} type="file" accept={ACCEPTED} style={{ display: "none" }}
+                onChange={e => handleFile(e.target.files?.[0])} />
+
+              <div style={{
+                width: 46, height: 46, borderRadius: 13,
+                background: file ? "#d1fae5" : dragOver ? "#dbeafe" : "#e8f0f7",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                transition: "background 0.15s",
+              }}>
+                {file ? (
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                    <path d="M5 13l4 4L19 7" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                ) : (
+                  <svg width="24" height="24" viewBox="0 0 26 26" fill="none">
+                    <path d="M13 17V6M13 6L9 10M13 6L17 10" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M4 20v1a1 1 0 001 1h16a1 1 0 001-1v-1" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                )}
+              </div>
+
+              {file ? (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  background: "#f0fdf8", border: "1px solid #a7f3d0",
+                  borderRadius: 10, padding: "8px 12px", width: "100%",
+                }}>
+                  <div style={{
+                    width: 30, height: 30, borderRadius: 7,
+                    background: fileClr.bg, color: fileClr.color,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 9, fontWeight: 700, flexShrink: 0,
+                  }}>{fileExt.toUpperCase()}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#065f46", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</div>
+                    <div style={{ fontSize: 10, color: "#6ee7b7" }}>{fileSize}</div>
+                  </div>
+                  <div onClick={e => { e.stopPropagation(); setFile(null); }}
+                    style={{ color: "#6ee7b7", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>✕</div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
+                  {FILE_TYPE_BADGES.map((ft, i) => ft === null ? (
+                    <div key="sep" style={{ width: 1, height: 28, background: "#e2eaf2", margin: "0 2px", alignSelf: "center" }}/>
+                  ) : (
+                    <div key={ft.ext} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                      <div style={{
+                        width: 33, height: 33, borderRadius: 8,
+                        background: ft.bg, color: ft.color,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 9, fontWeight: 700,
+                      }}>{ft.ext}</div>
+                      <span style={{ fontSize: 8, color: "#94a3b8", fontWeight: 500 }}>{ft.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Paste zone */}
+            <div style={{
+              background: "#fff", border: "2px dashed #c5d6e8",
+              borderRadius: 16, padding: "24px 16px",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 12,
+              minHeight: 200,
+            }}>
+              <div style={{
+                width: 46, height: 46, borderRadius: 13, background: "#e8f0f7",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <svg width="24" height="24" viewBox="0 0 26 26" fill="none">
+                  <rect x="7" y="3" width="10" height="4" rx="1.5" stroke="#3b82f6" strokeWidth="1.8"/>
+                  <rect x="5" y="6" width="16" height="17" rx="2.5" stroke="#3b82f6" strokeWidth="1.8"/>
+                  <path d="M9 13h8M9 16.5h5" stroke="#3b82f6" strokeWidth="1.6" strokeLinecap="round"/>
+                </svg>
+              </div>
+              <textarea
+                value={pasteText}
+                onChange={e => setPasteText(e.target.value)}
+                placeholder={"Paste table data here…\n\nRole  Rate  W1  W2  W3\nSME   275   0.1 0.1 0.1\nBA    55    0.5 0.5 0.5"}
+                style={{
+                  width: "100%", flex: 1, minHeight: 100,
+                  border: `1px solid ${pasteText ? "#059669" : "#d0dbe8"}`,
+                  borderRadius: 10, background: "#f8fafc",
+                  resize: "none", padding: "8px 10px",
+                  fontSize: 11, color: "#334155",
+                  fontFamily: "'JetBrains Mono',monospace",
+                  outline: "none", lineHeight: 1.6, boxSizing: "border-box",
+                }}
+              />
+            </div>
           </div>
 
-          {/* card */}
-          <div style={{
-            background: C.card, border: `1px solid ${C.border}`,
-            borderRadius: 16, boxShadow: C.shadow, overflow: "hidden",
-          }}>
-            {/* tabs */}
-            <div style={{ display: "flex", borderBottom: `1px solid ${C.border}` }}>
-              <button style={tabStyle(activeTab === "upload")} onClick={() => setActiveTab("upload")}>
-                📁 Upload File
-              </button>
-              <button style={tabStyle(activeTab === "paste")} onClick={() => setActiveTab("paste")}>
-                📋 Paste Table
-              </button>
+          {/* Project type */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: "#7c86a2", marginBottom: 6, fontWeight: 600 }}>
+              Project type <span style={{ fontWeight: 400 }}>(optional — helps AI suggest roles)</span>
             </div>
+            <input type="text" value={projectDesc} onChange={e => setProjectDesc(e.target.value)}
+              placeholder="e.g. e-commerce migration, CRM rollout, data warehouse..."
+              style={{
+                width: "100%", background: "#fff", border: "1px solid #dde3f0",
+                borderRadius: 8, color: IL.text, padding: "8px 12px", fontSize: 13,
+                outline: "none", fontFamily: "'Space Grotesk',sans-serif", boxSizing: "border-box",
+              }}
+            />
+          </div>
 
-            <div style={{ padding: "24px" }}>
-              {/* UPLOAD TAB */}
-              {activeTab === "upload" && (
-                <div>
-                  <div
-                    onClick={() => fileRef.current?.click()}
-                    onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                    onDragLeave={() => setDragOver(false)}
-                    onDrop={onDrop}
-                    style={{
-                      border: `2px dashed ${dragOver ? C.accent : file ? C.accent2 : C.border}`,
-                      borderRadius: 12, padding: "32px 20px", textAlign: "center",
-                      cursor: "pointer", transition: "all 0.2s",
-                      background: dragOver ? C.accent + "08" : file ? C.accent2 + "08" : "transparent",
-                    }}
-                  >
-                    <input ref={fileRef} type="file" accept={ACCEPTED} style={{ display: "none" }}
-                      onChange={e => handleFile(e.target.files?.[0])} />
-                    {file ? (
-                      <div>
-                        <div style={{ fontSize: 28, marginBottom: 8 }}>{isImage ? "🖼️" : "📄"}</div>
-                        <div style={{ fontWeight: 600, fontSize: 14, color: C.accent2 }}>{file.name}</div>
-                        <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>
-                          {(file.size / 1024).toFixed(1)} KB · Click to change
-                        </div>
-                      </div>
-                    ) : (
-                      <div>
-                        <div style={{ fontSize: 32, marginBottom: 8 }}>⬆️</div>
-                        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>
-                          Drop your file here or click to browse
-                        </div>
-                        <div style={{ fontSize: 12, color: C.muted }}>
-                          Supports: PNG, JPG, GIF, WebP (screenshots) · CSV, TXT (data files)
-                        </div>
-                        <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
-                          💡 For Excel files, save as CSV first (File → Save As → CSV)
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+          {/* Error */}
+          {error && (
+            <div style={{
+              marginBottom: 12, background: "#fef2f2", border: "1px solid #fca5a5",
+              borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#dc2626",
+            }}>{error}</div>
+          )}
 
-              {/* PASTE TAB */}
-              {activeTab === "paste" && (
-                <div>
-                  <div style={{ fontSize: 12, color: C.muted, marginBottom: 8 }}>
-                    Paste your table, copied from Excel, email, or any document:
-                  </div>
-                  <textarea
-                    value={pasteText}
-                    onChange={e => setPasteText(e.target.value)}
-                    placeholder={"Role\t%\tW1\tW2\tW3\tW4\tRate\nSME\t0.1\t0.1\t0.1\t0.1\t0.1\t275\nBA\t0.5\t0.5\t0.5\t0.5\t0.5\t55\nQA\t1\t1\t1\t1\t1\t24"}
-                    rows={8}
-                    style={{
-                      width: "100%", background: C.inputBg,
-                      border: `1px solid ${pasteText ? C.accent2 : C.border}`,
-                      borderRadius: 8, color: C.text, padding: "10px 12px",
-                      fontSize: 12, outline: "none", resize: "vertical",
-                      fontFamily: "'JetBrains Mono',monospace",
-                      boxSizing: "border-box", lineHeight: 1.6,
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* project description */}
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 12, color: C.muted, marginBottom: 6, fontWeight: 600 }}>
-                  Project type <span style={{ fontWeight: 400 }}>(optional — helps AI suggest roles)</span>
-                </div>
-                <input type="text" value={projectDesc} onChange={e => setProjectDesc(e.target.value)}
-                  placeholder="e.g. e-commerce migration, CRM rollout, data warehouse..."
-                  style={{
-                    width: "100%", background: C.inputBg, border: `1px solid ${C.border}`,
-                    borderRadius: 8, color: C.text, padding: "8px 12px", fontSize: 13,
-                    outline: "none", fontFamily: "'Space Grotesk',sans-serif", boxSizing: "border-box",
-                  }}
-                />
-              </div>
-
-              {/* error */}
-              {error && (
-                <div style={{
-                  marginTop: 12, background: C.danger + "18", border: `1px solid ${C.danger}44`,
-                  borderRadius: 8, padding: "10px 14px", fontSize: 13, color: C.danger,
-                }}>{error}</div>
-              )}
-
-              {/* CTA */}
-              <div style={{ marginTop: 20, display: "flex", justifyContent: "center" }}>
-                <ApplyBtn onClick={analyse} disabled={loading} C={C}>
-                  {loading ? "⏳ AI is reading your data..." : "✨ Analyse & Load into Planner →"}
-                </ApplyBtn>
-              </div>
-            </div>
+          {/* CTA */}
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+            <ApplyBtn onClick={analyse} disabled={loading} C={IL}>
+              {loading ? "⏳ AI is reading your data..." : "✨ Analyse & Load into Planner →"}
+            </ApplyBtn>
           </div>
 
           {/* API key */}
           <div style={{
-            marginTop: 20, background: C.card, border: `1px solid ${C.border}`,
+            background: "#fff", border: "1px solid #dde3f0",
             borderRadius: 12, padding: "16px 20px",
           }}>
-            <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, fontWeight: 600 }}>
+            <div style={{ fontSize: 12, color: "#7c86a2", marginBottom: 8, fontWeight: 600 }}>
               🔑 Anthropic API Key
               <span style={{ fontWeight: 400, marginLeft: 6 }}>
                 — needed for AI features. Get one at{" "}
-                <a href="https://console.anthropic.com" target="_blank" rel="noreferrer"
-                  style={{ color: C.accent }}>console.anthropic.com</a>
+                <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
+                  console.anthropic.com
+                </a>
               </span>
             </div>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
+            <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
               placeholder="sk-ant-..."
               style={{
-                width: "100%", background: C.inputBg,
-                border: `1px solid ${apiKey ? C.accent2 : C.border}`,
-                borderRadius: 8, color: C.text, padding: "8px 12px", fontSize: 13,
+                width: "100%", background: "#f0f4fb",
+                border: `1px solid ${apiKey ? "#059669" : "#dde3f0"}`,
+                borderRadius: 8, color: IL.text, padding: "8px 12px", fontSize: 13,
                 outline: "none", fontFamily: "'JetBrains Mono',monospace", boxSizing: "border-box",
               }}
             />
-            <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
+            <div style={{ fontSize: 11, color: "#7c86a2", marginTop: 6 }}>
               🔒 Your key is never stored or sent anywhere except directly to Anthropic's API.
             </div>
           </div>
+
         </div>
       </div>
     </div>
@@ -927,17 +929,17 @@ Rules:
    PAGE 2 — PLANNER
 ═══════════════════════════════════════════════ */
 function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, projectType, apiKey, onBack, dark, setDark, C }) {
-  const [currency, setCurrency]       = useState("USD");
-  const [weekLabels, setWeekLabels]   = useState(() => Array.from({length: numWeeks}, (_,i) => `W${i+1}`));
-  const [editLabel, setEditLabel]     = useState(null);
-  const [sprintHours, setSH]          = useState(40);
-  const [showSettings, setShowSet]    = useState(false);
-  const [showTable, setShowTable]     = useState(true);
-  const [showEngine, setShowEngine]   = useState(true);
+  const [currency, setCurrency]           = useState("USD");
+  const [weekLabels, setWeekLabels]       = useState(() => Array.from({length: numWeeks}, (_,i) => `W${i+1}`));
+  const [editLabel, setEditLabel]         = useState(null);
+  const [sprintHours, setSH]              = useState(40);
+  const [showSettings, setShowSet]        = useState(false);
+  const [showTable, setShowTable]         = useState(true);
+  const [showEngine, setShowEngine]       = useState(true);
   const [showBreakdown, setShowBreakdown] = useState(true);
   const [showSuggester, setShowSuggester] = useState(false);
   const [showCommentary, setShowCommentary] = useState(false);
-  const [targetMargin, setTM]         = useState(30);
+  const [targetMargin, setTM]             = useState(30);
   const sym = SYMBOLS[currency];
 
   function changeWeeks(n) {
@@ -984,7 +986,6 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
     }}>
       <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
 
-      {/* top bar */}
       <div style={{
         padding:"14px 24px", display:"flex", alignItems:"center",
         justifyContent:"space-between", borderBottom:`1px solid ${C.border}`,
@@ -995,7 +996,6 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
             background:"transparent", border:`1px solid ${C.border}`,
             borderRadius:8, color:C.muted, cursor:"pointer",
             padding:"6px 12px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif",
-            display:"flex", alignItems:"center", gap:4,
           }}>← Intake</button>
           <div style={{width:1,height:24,background:C.border}}/>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -1007,17 +1007,9 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
             <div>
               <div style={{fontWeight:700,fontSize:14}}>Resource Effort Planner</div>
               <div style={{fontSize:10,color:C.muted,display:"flex",alignItems:"center",gap:4}}>
-                <span style={{
-                  background:C.accent2+"22", color:C.accent2,
-                  borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:700,
-                }}>PLANNER</span>
-                {loadedFromAI && (
-                  <span style={{
-                    background:C.accent+"22", color:C.accent,
-                    borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:600,
-                  }}>✨ {roles.length} roles loaded from AI</span>
-                )}
-                {projectType && <span style={{color:C.muted}}>· {projectType}</span>}
+                <span style={{background:C.accent2+"22",color:C.accent2,borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:700}}>PLANNER</span>
+                {loadedFromAI&&<span style={{background:C.accent+"22",color:C.accent,borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:600}}>✨ {roles.length} roles loaded from AI</span>}
+                {projectType&&<span style={{color:C.muted}}>· {projectType}</span>}
               </div>
             </div>
           </div>
@@ -1029,15 +1021,9 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
         </div>
       </div>
 
-      <div style={{padding:"24px 24px"}}>
-
-        {/* settings */}
-        {showSettings && (
-          <div style={{
-            background:C.card,border:`1px solid ${C.border}`,borderRadius:12,
-            padding:20,marginBottom:20,display:"flex",gap:24,flexWrap:"wrap",
-            alignItems:"flex-end",boxShadow:C.shadow,
-          }}>
+      <div style={{padding:"24px"}}>
+        {showSettings&&(
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,marginBottom:20,display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-end",boxShadow:C.shadow}}>
             <div>
               <div style={{fontSize:11,color:C.muted,fontWeight:600,letterSpacing:"0.06em",marginBottom:6}}>WEEKS</div>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -1053,38 +1039,24 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
           </div>
         )}
 
-        {/* summary cards */}
         <div style={{display:"flex",gap:10,marginBottom:20,flexWrap:"wrap"}}>
           {[
-            {label:"Total Revenue",  value:fmt(totalRevenueUSD,sym,currency), color:C.accent2,  icon:"📈"},
-            {label:"Total Cost",     value:fmt(totalCostUSD,sym,currency),    color:C.accent3,  icon:"💸"},
-            {label:"Overall Margin", value:`${overallMargin.toFixed(1)}%`,    color:marginColor(overallMargin,targetMargin,C), icon:"🎯"},
-            {label:"Total Hours",    value:`${totalHours.toLocaleString()}h`, color:C.accent,   icon:"⏱"},
-            {label:"Roles",          value:roles.length,                       color:C.muted,    icon:"👥"},
+            {label:"Total Revenue",value:fmt(totalRevenueUSD,sym,currency),color:C.accent2,icon:"📈"},
+            {label:"Total Cost",value:fmt(totalCostUSD,sym,currency),color:C.accent3,icon:"💸"},
+            {label:"Overall Margin",value:`${overallMargin.toFixed(1)}%`,color:marginColor(overallMargin,targetMargin,C),icon:"🎯"},
+            {label:"Total Hours",value:`${totalHours.toLocaleString()}h`,color:C.accent,icon:"⏱"},
+            {label:"Roles",value:roles.length,color:C.muted,icon:"👥"},
           ].map(card=>(
-            <div key={card.label} style={{
-              background:C.card,border:`1px solid ${C.border}`,borderRadius:12,
-              padding:"12px 18px",flex:"1 1 110px",minWidth:110,
-              boxShadow:C.shadow,transition:"background 0.25s",
-            }}>
-              <div style={{fontSize:10,color:C.muted,fontWeight:600,letterSpacing:"0.06em",marginBottom:4}}>
-                {card.icon} {card.label.toUpperCase()}
-              </div>
-              <div style={{fontSize:20,fontWeight:700,color:card.color,fontFamily:"'JetBrains Mono',monospace"}}>
-                {card.value}
-              </div>
+            <div key={card.label} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 18px",flex:"1 1 110px",minWidth:110,boxShadow:C.shadow}}>
+              <div style={{fontSize:10,color:C.muted,fontWeight:600,letterSpacing:"0.06em",marginBottom:4}}>{card.icon} {card.label.toUpperCase()}</div>
+              <div style={{fontSize:20,fontWeight:700,color:card.color,fontFamily:"'JetBrains Mono',monospace"}}>{card.value}</div>
             </div>
           ))}
         </div>
 
-        {/* ═══ 1. RESOURCE LOADING ═══ */}
-        <SectionHeader label="RESOURCE LOADING" open={showTable} onToggle={()=>setShowTable(s=>!s)}
-          badge={`${roles.length} roles · ${numWeeks} weeks`} C={C}/>
-        {showTable && (<>
-          <div style={{
-            background:C.card,border:`1px solid ${C.border}`,borderRadius:14,
-            overflow:"auto",marginBottom:14,boxShadow:C.shadow,
-          }}>
+        <SectionHeader label="RESOURCE LOADING" open={showTable} onToggle={()=>setShowTable(s=>!s)} badge={`${roles.length} roles · ${numWeeks} weeks`} C={C}/>
+        {showTable&&(<>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,overflow:"auto",marginBottom:14,boxShadow:C.shadow}}>
             <table style={{width:"100%",borderCollapse:"collapse",minWidth:820}}>
               <thead>
                 <tr style={{background:C.surface}}>
@@ -1100,16 +1072,10 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
                           onChange={e=>setWeekLabels(p=>p.map((l,j)=>j===i?e.target.value:l))}
                           onBlur={()=>setEditLabel(null)}
                           onKeyDown={e=>e.key==="Enter"&&setEditLabel(null)}
-                          style={{
-                            background:"transparent",border:"none",color:C.accent,
-                            width:46,textAlign:"center",fontFamily:"'JetBrains Mono',monospace",
-                            fontSize:11,fontWeight:700,outline:`1px solid ${C.accent}`,
-                            borderRadius:4,padding:"2px 4px",
-                          }}
+                          style={{background:"transparent",border:"none",color:C.accent,width:46,textAlign:"center",fontFamily:"'JetBrains Mono',monospace",fontSize:11,fontWeight:700,outline:`1px solid ${C.accent}`,borderRadius:4,padding:"2px 4px"}}
                         />
                       ):(
-                        <span style={{cursor:"pointer",borderBottom:`1px dashed ${C.border}`}}
-                          title="Click to rename" onClick={()=>setEditLabel(i)}>{w}</span>
+                        <span style={{cursor:"pointer",borderBottom:`1px dashed ${C.border}`}} title="Click to rename" onClick={()=>setEditLabel(i)}>{w}</span>
                       )}
                     </th>
                   ))}
@@ -1124,11 +1090,9 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
                 {roles.map((role,ri)=>{
                   const s=stats[ri]; const mc=marginColor(s.margin,targetMargin,C);
                   return (
-                    <tr key={role.id}
-                      style={{borderTop:`1px solid ${C.border}`,transition:"background 0.1s"}}
+                    <tr key={role.id} style={{borderTop:`1px solid ${C.border}`,transition:"background 0.1s"}}
                       onMouseEnter={e=>e.currentTarget.style.background=C.surface}
-                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-                    >
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                       <td style={TD}><TextInput value={role.name} onChange={v=>upd(role.id,"name",v)} extraStyle={{fontWeight:600,fontSize:14}} C={C}/></td>
                       <td style={TD}><RateInput usdValue={role.rate} onUsdChange={v=>upd(role.id,"rate",v)} currency={currency} C={C}/></td>
                       <td style={TD}><RateInput usdValue={role.wsr} onUsdChange={v=>upd(role.id,"wsr",v)} currency={currency} C={C} highlight={C.accent2}/></td>
@@ -1136,8 +1100,7 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
                       <td style={TD}><NumInput value={role.hoursPerWeek??sprintHours} onChange={v=>upd(role.id,"hoursPerWeek",v)} step={1} min={1} C={C}/></td>
                       {role.weekAllocations.slice(0,numWeeks).map((w,wi)=>(
                         <td key={wi} style={TD}>
-                          <NumInput value={w} onChange={v=>updW(role.id,wi,Math.min(1,Math.max(0,v)))}
-                            step={0.1} C={C} extraStyle={{color:w===1?C.accent2:w===0?C.muted:C.text}}/>
+                          <NumInput value={w} onChange={v=>updW(role.id,wi,Math.min(1,Math.max(0,v)))} step={0.1} C={C} extraStyle={{color:w===1?C.accent2:w===0?C.muted:C.text}}/>
                         </td>
                       ))}
                       <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:C.accent2,fontSize:13}}>{s.total.toFixed(1)}</span></td>
@@ -1168,45 +1131,24 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
             </table>
           </div>
           <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:24}}>
-            <button onClick={addR} style={{
-              background:`linear-gradient(135deg,${C.accent}22,${C.accent2}22)`,
-              border:`1px solid ${C.accent}`,color:C.accent,borderRadius:8,
-              padding:"8px 18px",cursor:"pointer",fontSize:13,fontWeight:600,
-              fontFamily:"'Space Grotesk',sans-serif",display:"flex",alignItems:"center",gap:6,
-            }}>+ Add Role</button>
+            <button onClick={addR} style={{background:`linear-gradient(135deg,${C.accent}22,${C.accent2}22)`,border:`1px solid ${C.accent}`,color:C.accent,borderRadius:8,padding:"8px 18px",cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"'Space Grotesk',sans-serif",display:"flex",alignItems:"center",gap:6}}>+ Add Role</button>
             <Btn onClick={()=>changeWeeks(numWeeks+1)} C={C} accent={C.accent2}>+ Add Week</Btn>
             {numWeeks>1&&<Btn onClick={()=>changeWeeks(numWeeks-1)} C={C} accent={C.danger}>− Remove Week</Btn>}
-            <span style={{marginLeft:"auto",color:C.muted,fontSize:12}}>
-              💡 Click week headers to rename · ↔ fills all weeks
-            </span>
+            <span style={{marginLeft:"auto",color:C.muted,fontSize:12}}>💡 Click week headers to rename · ↔ fills all weeks</span>
           </div>
         </>)}
 
-        {/* ═══ 2. MARGIN ENGINE ═══ */}
-        <SectionHeader label="MARGIN ENGINE" open={showEngine} onToggle={()=>setShowEngine(s=>!s)}
-          badge={`Target ${targetMargin}% · Current ${overallMargin.toFixed(1)}%`}
-          badgeColor={marginColor(overallMargin,targetMargin,C)} C={C}/>
-        {showEngine && (
-          <MarginEngine roles={roles} setRoles={setRoles}
-            targetMargin={targetMargin} setTargetMargin={setTM}
-            stats={stats} sym={sym} currency={currency} C={C}/>
-        )}
+        <SectionHeader label="MARGIN ENGINE" open={showEngine} onToggle={()=>setShowEngine(s=>!s)} badge={`Target ${targetMargin}% · Current ${overallMargin.toFixed(1)}%`} badgeColor={marginColor(overallMargin,targetMargin,C)} C={C}/>
+        {showEngine&&<MarginEngine roles={roles} setRoles={setRoles} targetMargin={targetMargin} setTargetMargin={setTM} stats={stats} sym={sym} currency={currency} C={C}/>}
 
-        {/* ═══ 3. ROLE BREAKDOWN ═══ */}
-        <SectionHeader label="ROLE BREAKDOWN" open={showBreakdown} onToggle={()=>setShowBreakdown(s=>!s)}
-          badge={`${roles.length} roles`} C={C}/>
-        {showBreakdown && (
+        <SectionHeader label="ROLE BREAKDOWN" open={showBreakdown} onToggle={()=>setShowBreakdown(s=>!s)} badge={`${roles.length} roles`} C={C}/>
+        {showBreakdown&&(
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
             {roles.map((r,i)=>{
-              const s=stats[i];
-              const revPct=totalRevenueUSD>0?(s.revenue/totalRevenueUSD*100).toFixed(1):0;
-              const col=BAR_COLORS[i%BAR_COLORS.length];
-              const mc=marginColor(s.margin,targetMargin,C);
+              const s=stats[i]; const revPct=totalRevenueUSD>0?(s.revenue/totalRevenueUSD*100).toFixed(1):0;
+              const col=BAR_COLORS[i%BAR_COLORS.length]; const mc=marginColor(s.margin,targetMargin,C);
               return (
-                <div key={r.id} style={{
-                  background:C.card,border:`1px solid ${C.border}`,borderRadius:10,
-                  padding:"12px 16px",flex:"1 1 160px",minWidth:160,boxShadow:C.shadow,
-                }}>
+                <div key={r.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 16px",flex:"1 1 160px",minWidth:160,boxShadow:C.shadow}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                     <span style={{fontWeight:700,fontSize:14}}>{r.name}</span>
                     <Badge color={mc}>{s.margin.toFixed(1)}%</Badge>
@@ -1214,76 +1156,49 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
                   <div style={{height:4,background:C.border,borderRadius:2,marginBottom:8}}>
                     <div style={{height:"100%",width:`${revPct}%`,background:col,borderRadius:2,transition:"width 0.3s"}}/>
                   </div>
-                  <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:15,fontWeight:700,color:col}}>
-                    {fmt(s.revenue,sym,currency)}
-                  </div>
-                  <div style={{fontSize:11,color:C.muted,marginTop:3,fontFamily:"monospace"}}>
-                    Cost {fmt(s.cost,sym,currency)} · {s.hours}h
-                  </div>
-                  <div style={{fontSize:11,color:C.muted,marginTop:1,fontFamily:"monospace"}}>
-                    {fmtRate(r.rate,sym,currency)}/h CBR · {fmtRate(r.wsr,sym,currency)}/h WSR
-                  </div>
+                  <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:15,fontWeight:700,color:col}}>{fmt(s.revenue,sym,currency)}</div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:3,fontFamily:"monospace"}}>Cost {fmt(s.cost,sym,currency)} · {s.hours}h</div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:1,fontFamily:"monospace"}}>{fmtRate(r.rate,sym,currency)}/h CBR · {fmtRate(r.wsr,sym,currency)}/h WSR</div>
                 </div>
               );
             })}
           </div>
         )}
 
-        {/* ═══ AI TOOLS ═══ */}
-        <SectionHeader label="AI TOOLS" open={showSuggester||showCommentary}
-          onToggle={()=>{ setShowSuggester(s=>!s); setShowCommentary(s=>!s); }}
-          badge="Role Suggester · Margin Commentary" badgeColor={C.accent} C={C}/>
-
-        <SectionHeader label="SMART ROLE SUGGESTER" open={showSuggester}
-          onToggle={()=>setShowSuggester(s=>!s)} C={C}/>
-        {showSuggester && (
-          <RoleSuggester roles={roles} setRoles={setRoles} numWeeks={numWeeks}
-            targetMargin={targetMargin} projectType={projectType} apiKey={apiKey} C={C}/>
-        )}
-
-        <SectionHeader label="AI MARGIN COMMENTARY" open={showCommentary}
-          onToggle={()=>setShowCommentary(s=>!s)} C={C}/>
-        {showCommentary && (
-          <MarginCommentary
-            roles={roles} stats={stats}
-            totalCostUSD={totalCostUSD} totalRevenueUSD={totalRevenueUSD}
-            overallMargin={overallMargin} targetMargin={targetMargin}
-            sym={sym} currency={currency} apiKey={apiKey} C={C}/>
-        )}
-
+        <SectionHeader label="AI TOOLS" open={showSuggester||showCommentary} onToggle={()=>{setShowSuggester(s=>!s);setShowCommentary(s=>!s);}} badge="Role Suggester · Margin Commentary" badgeColor={C.accent} C={C}/>
+        <SectionHeader label="SMART ROLE SUGGESTER" open={showSuggester} onToggle={()=>setShowSuggester(s=>!s)} C={C}/>
+        {showSuggester&&<RoleSuggester roles={roles} setRoles={setRoles} numWeeks={numWeeks} targetMargin={targetMargin} projectType={projectType} apiKey={apiKey} C={C}/>}
+        <SectionHeader label="AI MARGIN COMMENTARY" open={showCommentary} onToggle={()=>setShowCommentary(s=>!s)} C={C}/>
+        {showCommentary&&<MarginCommentary roles={roles} stats={stats} totalCostUSD={totalCostUSD} totalRevenueUSD={totalRevenueUSD} overallMargin={overallMargin} targetMargin={targetMargin} sym={sym} currency={currency} apiKey={apiKey} C={C}/>}
       </div>
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════
-   ROOT APP — controls which page is shown
+   ROOT APP
 ═══════════════════════════════════════════════ */
 export default function App() {
-  const [dark, setDark]           = useState(true);
-  const C                          = THEMES[dark ? "dark" : "light"];
-  const [page, setPage]           = useState("intake");
-  const [roles, setRoles]         = useState(defaultRoles);
-  const [numWeeks, setNumWeeks]   = useState(4);
+  const [dark, setDark]         = useState(true);
+  const C                        = THEMES[dark ? "dark" : "light"];
+  const [page, setPage]         = useState("intake");
+  const [roles, setRoles]       = useState(defaultRoles);
+  const [numWeeks, setNumWeeks] = useState(4);
   const [loadedFromAI, setLoaded] = useState(false);
-  const [projectType, setPT]      = useState("");
-  const [apiKey, setApiKey]       = useState("");
+  const [projectType, setPT]    = useState("");
+  const [apiKey, setApiKey]     = useState("");
 
   function handleLoad({ roles: r, numWeeks: nw, projectType: pt }) {
-    setRoles(r); setNumWeeks(nw); setPT(pt);
-    setLoaded(true); setPage("planner");
+    setRoles(r); setNumWeeks(nw); setPT(pt); setLoaded(true); setPage("planner");
   }
-
   function handleSkip() {
-    setRoles(defaultRoles); setNumWeeks(4);
-    setLoaded(false); setPage("planner");
+    setRoles(defaultRoles); setNumWeeks(4); setLoaded(false); setPage("planner");
   }
 
   if (page === "intake") {
     return <IntakePage onLoad={handleLoad} onSkip={handleSkip}
-      apiKey={apiKey} setApiKey={setApiKey} dark={dark} setDark={setDark} C={C}/>;
+      apiKey={apiKey} setApiKey={setApiKey} dark={dark} setDark={setDark}/>;
   }
-
   return <PlannerPage roles={roles} setRoles={setRoles}
     numWeeks={numWeeks} setNumWeeks={setNumWeeks}
     loadedFromAI={loadedFromAI} projectType={projectType}
