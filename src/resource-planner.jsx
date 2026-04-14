@@ -27,9 +27,22 @@ const THEMES = {
    CURRENCY
 ═══════════════════════════════════════════════ */
 const SYMBOLS  = { USD: "$", EUR: "€", GBP: "£", INR: "₹" };
-const FX_RATES = { USD: 1, EUR: 0.92, GBP: 0.79, INR: 83.5 };
-const toFx    = (usd, cur) => usd * FX_RATES[cur];
-const fromFx  = (val, cur) => val / FX_RATES[cur];
+const FX_RATES = { USD: 1, EUR: 0.92, GBP: 0.79, INR: 83.5 }; // fallback
+let liveFxRates = { ...FX_RATES };
+
+async function fetchLiveRates() {
+  try {
+    const res = await fetch("https://api.frankfurter.app/latest?from=USD&to=EUR,GBP,INR");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.rates) {
+      liveFxRates = { USD: 1, ...data.rates };
+    }
+  } catch (_) { /* silently fall back to hardcoded */ }
+}
+
+const toFx    = (usd, cur) => usd * (liveFxRates[cur] ?? FX_RATES[cur]);
+const fromFx  = (val, cur) => val / (liveFxRates[cur] ?? FX_RATES[cur]);
 const fmt     = (usd, sym, cur) => `${sym}${Math.round(toFx(usd, cur)).toLocaleString("en-IN")}`;
 const fmtRate = (usd, sym, cur) => { const v = toFx(usd, cur); return `${sym}${v % 1 === 0 ? v.toFixed(0) : v.toFixed(2)}`; };
 const fmtP    = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
@@ -257,7 +270,7 @@ function ThemeToggle({ dark, setDark, C }) {
   );
 }
 
-function CurrencyBar({ currency, setCurrency, C }) {
+function CurrencyBar({ currency, setCurrency, C, ratesReady }) {
   return (
     <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
       {["USD","EUR","GBP","INR"].map(c => {
@@ -283,10 +296,15 @@ function CurrencyBar({ currency, setCurrency, C }) {
       })}
       {currency !== "USD" && (
         <span style={{
-          fontSize: 10, color: C.muted, fontFamily: "monospace",
-          background: C.surface, border: `1px solid ${C.border}`,
+          fontSize: 10, color: ratesReady ? C.accent2 : C.muted, fontFamily: "monospace",
+          background: C.surface, border: `1px solid ${ratesReady ? C.accent2 + "44" : C.border}`,
           borderRadius: 4, padding: "2px 6px", whiteSpace: "nowrap",
-        }}>1 USD = {FX_RATES[currency]} {currency}</span>
+          transition: "all 0.3s",
+        }}>
+          {ratesReady
+            ? `1 USD = ${liveFxRates[currency]?.toFixed(4)} ${currency} · live`
+            : `1 USD = ${FX_RATES[currency]} ${currency} · loading…`}
+        </span>
       )}
     </div>
   );
@@ -1132,6 +1150,11 @@ Rules:
 ═══════════════════════════════════════════════ */
 function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, projectType, apiKey, onBack, dark, setDark, C }) {
   const [currency, setCurrency]           = useState("USD");
+  const [ratesReady, setRatesReady]       = useState(false);
+
+  useEffect(() => {
+    fetchLiveRates().then(() => setRatesReady(true));
+  }, []);
   const [weekLabels, setWeekLabels]       = useState(() => Array.from({length: numWeeks}, (_,i) => `W${i+1}`));
   const [editLabel, setEditLabel]         = useState(null);
   const [sprintHours, setSH]              = useState(40);
@@ -1227,7 +1250,7 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <ThemeToggle dark={dark} setDark={setDark} C={C}/>
-          <CurrencyBar currency={currency} setCurrency={setCurrency} C={C}/>
+          <CurrencyBar currency={currency} setCurrency={setCurrency} C={C} ratesReady={ratesReady}/>
           <IconBtn onClick={()=>setShowSet(s=>!s)} title="Settings" color={C.accent} C={C}>⚙</IconBtn>
         </div>
       </div>
