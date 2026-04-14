@@ -920,6 +920,7 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
   const [showSettings, setShowSet]        = useState(false);
   const [showTable, setShowTable]         = useState(true);
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [showSuggester, setShowSuggester] = useState(false);
   const [showAI, setShowAI]               = useState(false);
   const [expandedRows, setExpandedRows]   = useState({});
   const [targetMargin, setTM]             = useState(30);
@@ -1235,6 +1236,10 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
             <span style={{marginLeft:"auto",color:C.muted,fontSize:11}}>💡 Role/CBR/WSR/Margin frozen left · Hours/Cost/Revenue frozen right · Weeks scroll in the middle</span>
           </div>
         </>)}
+
+        {/* ── SMART ROLE SUGGESTER ── */}
+        <SectionHeader label="SMART ROLE SUGGESTER" open={showSuggester} onToggle={()=>setShowSuggester(s=>!s)} badge="AI" badgeColor={C.accent} C={C}/>
+        {showSuggester && <RoleSuggester roles={roles} setRoles={setRoles} numWeeks={numWeeks} targetMargin={targetMargin} projectType={projectType} apiKey={apiKey} C={C}/>}
 
         {/* ── ROLE BREAKDOWN (bar chart) ── */}
         <SectionHeader label="ROLE BREAKDOWN" open={showBreakdown} onToggle={()=>setShowBreakdown(s=>!s)} badge={`${roles.length} roles`} C={C}/>
