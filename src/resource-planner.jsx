@@ -1148,7 +1148,7 @@ Rules:
 /* ═══════════════════════════════════════════════
    PAGE 2 — PLANNER
 ═══════════════════════════════════════════════ */
-function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, projectType, apiKey, onBack, dark, setDark, C }) {
+function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, projectType, apiKey, onBack, onGenerateSOW, onSOWLibrary, dark, setDark, C }) {
   const [currency, setCurrency]           = useState("USD");
   const [ratesReady, setRatesReady]       = useState(false);
 
@@ -1251,6 +1251,8 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <ThemeToggle dark={dark} setDark={setDark} C={C}/>
           <CurrencyBar currency={currency} setCurrency={setCurrency} C={C} ratesReady={ratesReady}/>
+          <button onClick={onSOWLibrary} style={{ background:"transparent", border:`1px solid ${C.border}`, borderRadius:7, color:C.muted, cursor:"pointer", padding:"5px 11px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif", whiteSpace:"nowrap" }}>📄 SOW Library</button>
+          <button onClick={onGenerateSOW} style={{ background:`linear-gradient(135deg,${C.accent},${C.accent2})`, border:"none", borderRadius:7, color:"#fff", cursor:"pointer", padding:"6px 14px", fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", whiteSpace:"nowrap" }}>+ Generate SOW</button>
           <IconBtn onClick={()=>setShowSet(s=>!s)} title="Settings" color={C.accent} C={C}>⚙</IconBtn>
         </div>
       </div>
@@ -1573,6 +1575,563 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
   );
 }
 
+
+/* ═══════════════════════════════════════════════
+   SOW — STORAGE UTILITIES
+═══════════════════════════════════════════════ */
+const SOW_LIST_KEY = "rp_sow_library";
+const newSowId = () => "sow_" + Date.now();
+
+function loadSowList() {
+  try { return JSON.parse(localStorage.getItem(SOW_LIST_KEY) || "[]"); }
+  catch { return []; }
+}
+function saveSowList(list) { localStorage.setItem(SOW_LIST_KEY, JSON.stringify(list)); }
+function loadSowData(id) {
+  try { return JSON.parse(localStorage.getItem("rp_sow_" + id) || "null"); }
+  catch { return null; }
+}
+function saveSowData(id, data) { localStorage.setItem("rp_sow_" + id, JSON.stringify(data)); }
+function deleteSowById(id) {
+  localStorage.removeItem("rp_sow_" + id);
+  saveSowList(loadSowList().filter(s => s.id !== id));
+}
+
+/* ── Template definitions ── */
+const SOW_TEMPLATES = {
+  t1: {
+    name: "Template 1 — Narrative Style",
+    sections: [
+      { id: "confidentiality",   title: "Confidentiality Notice",    ai: false, auto: false },
+      { id: "executiveSummary",  title: "Executive Summary",          ai: true,  auto: false },
+      { id: "background",        title: "Background",                 ai: true,  auto: false },
+      { id: "scope",             title: "High Level Scope",           ai: true,  auto: false },
+      { id: "assumptions",       title: "Assumptions",                ai: true,  auto: false },
+      { id: "outOfScope",        title: "Out of Scope",               ai: true,  auto: false },
+      { id: "resourceDetails",   title: "Resource Details",           ai: false, auto: true  },
+      { id: "term",              title: "Term & Termination",         ai: false, auto: false },
+      { id: "financialCharges",  title: "Financial Charges",          ai: false, auto: true  },
+      { id: "acceptanceCriteria",title: "Acceptance Criteria",        ai: false, auto: false },
+      { id: "signatures",        title: "Signatures",                 ai: false, auto: false, special: "sig" },
+    ],
+  },
+  t2: {
+    name: "Template 2 — Formal Numbered Style",
+    sections: [
+      { id: "sowIntro",          title: "SOW Introduction",           ai: false, auto: false },
+      { id: "term",              title: "Term",                       ai: false, auto: false },
+      { id: "servicesDelivs",   title: "Services and Deliverables",  ai: true,  auto: false },
+      { id: "standards",         title: "Standards and Procedures",   ai: false, auto: false },
+      { id: "subcontractors",    title: "Subcontractors",             ai: false, auto: false },
+      { id: "termination",       title: "Termination",                ai: false, auto: false },
+      { id: "financialCharges",  title: "Fees and Expenses",          ai: false, auto: true  },
+      { id: "paymentSchedule",   title: "Payment Schedule",           ai: false, auto: true  },
+      { id: "resourceDetails",   title: "Resource Details",           ai: false, auto: true  },
+      { id: "additionalTerms",   title: "Additional Terms",           ai: false, auto: false },
+      { id: "resourceTermination", title: "Resource Termination",     ai: false, auto: false },
+      { id: "signatures",        title: "Signatures",                 ai: false, auto: false, special: "sig" },
+    ],
+  },
+  t3: {
+    name: "Template 3 — Change Order",
+    sections: [
+      { id: "coIntro",           title: "Change Order Introduction",  ai: false, auto: false },
+      { id: "descChanges",       title: "Description of Changes",     ai: true,  auto: false },
+      { id: "budgetTable",       title: "Change Order Budget",        ai: false, auto: true  },
+      { id: "paymentSchedule",   title: "Payment Schedule",           ai: false, auto: true  },
+      { id: "contractSummary",   title: "Contract Summary",           ai: false, auto: true  },
+      { id: "resourceTermination", title: "Resource Termination",     ai: false, auto: false },
+      { id: "signatures",        title: "Signatures",                 ai: false, auto: false, special: "sig" },
+    ],
+  },
+};
+
+const DEFAULT_CONTENT = {
+  confidentiality: "CONFIDENTIALITY: The information contained in this document shall be deemed Confidential Information to both parties. It shall not be disclosed, duplicated, or used for any purpose other than that stated herein, in whole or in part, without prior written consent of the other party.",
+  term: "The term of this Statement of Work shall commence on or about [Start Date] (the \"Start Date\") and end by [End Date] (the \"End Date\"), subject always to the applicable provisions of the Agreement.\n\nCancellation & Termination: Either party may cancel or terminate this Agreement by giving a prior written notice of no less than 30 days in advance.",
+  standards: "Vendor will provide the Services and Deliverables described in this SOW in compliance with the Client's Standard Operating Procedures and Work Instructions as well as relevant regulations.",
+  subcontractors: "Vendor will not use subcontractors to provide any of the Services.",
+  termination: "This SOW will commence on the Effective Date and shall continue in full force and effect until completion of the Services or earlier termination in accordance with the terms of the Master Service Agreement. Any resource release or termination shall require a minimum of 30 days' written notice by either party.",
+  acceptanceCriteria: "Upon completion of service, [Vendor] will provide a written notice of completion to [Client]. [Client] has the right to inspect any such deliverables and will have 15 days from the date of delivery to accept or reject in writing.",
+  resourceTermination: "Any resource release or termination shall require a minimum of 30 days' written notice by either party. Billing will continue through the notice period unless agreed otherwise.",
+  additionalTerms: "N/A",
+  subcontractors_t2: "Vendor will not use subcontractors to provide any of the Services.",
+  sowIntro: "This Statement of Work (\"SOW\") effective as of [Effective Date] is issued pursuant to the Master Services Agreement (the \"Agreement\") between [Client Name] and [Vendor Name] and incorporates all the terms and conditions therein.",
+  coIntro: "This Change Order (\"CO\") is entered into and made effective as of [CO Effective Date] and sets forth the changes to Services pursuant to Statement of Work #[SOW Number] entered into as of [SOW Date] between [Client Name] and [Vendor Name].",
+};
+
+function blankSow(template) {
+  const sections = {};
+  SOW_TEMPLATES[template].sections.forEach(s => {
+    sections[s.id] = DEFAULT_CONTENT[s.id] || "";
+  });
+  return {
+    template,
+    projectInfo: { projectName:"", clientName:"", clientContact:"", clientEmail:"", location:"", msaDate:"", effectiveDate:"", startDate:"", endDate:"", sowNumber:"", invoiceEmail:"", paymentDays:"" },
+    docHistory: [{ version:"1.0", author:"", date:"", description:"First draft" }],
+    sections,
+    signatories: { clientName:"", clientTitle:"", clientDate:"", vendorName:"", vendorTitle:"", vendorDate:"", vendorAddress:"", vendorPhone:"" },
+  };
+}
+
+/* ═══════════════════════════════════════════════
+   SOW LIBRARY PAGE
+═══════════════════════════════════════════════ */
+function SOWLibraryPage({ onBack, onOpen, onNew, dark, C }) {
+  const [list, setList] = useState(() => loadSowList());
+
+  function handleDelete(id) {
+    if (!window.confirm("Delete this SOW? This cannot be undone.")) return;
+    deleteSowById(id);
+    setList(loadSowList());
+  }
+
+  const tplLabel = id => SOW_TEMPLATES[id]?.name.split("—")[0].trim() || id;
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bg, color:C.text, fontFamily:"'Space Grotesk',sans-serif", transition:"background 0.25s" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+
+      {/* Top bar */}
+      <div style={{ padding:"12px 24px", display:"flex", alignItems:"center", justifyContent:"space-between", borderBottom:`1px solid ${C.border}`, background:C.card, position:"sticky", top:0, zIndex:100, boxShadow:C.shadow }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <button onClick={onBack} style={{ background:"transparent", border:`1px solid ${C.border}`, borderRadius:8, color:C.muted, cursor:"pointer", padding:"5px 12px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif" }}>← Planner</button>
+          <div style={{ width:1, height:22, background:C.border }}/>
+          <span style={{ fontWeight:700, fontSize:14 }}>SOW Library</span>
+        </div>
+        <button onClick={onNew} style={{ background:`linear-gradient(135deg,${C.accent},${C.accent2})`, border:"none", borderRadius:8, color:"#fff", padding:"8px 18px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif" }}>
+          + New SOW
+        </button>
+      </div>
+
+      <div style={{ padding:"28px 24px" }}>
+        {list.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"80px 20px" }}>
+            <div style={{ fontSize:40, marginBottom:16 }}>📄</div>
+            <div style={{ fontSize:16, fontWeight:600, color:C.text, marginBottom:8 }}>No SOWs yet</div>
+            <div style={{ fontSize:13, color:C.muted, marginBottom:24 }}>Create your first SOW from the planner page</div>
+            <button onClick={onNew} style={{ background:`linear-gradient(135deg,${C.accent},${C.accent2})`, border:"none", borderRadius:8, color:"#fff", padding:"10px 24px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif" }}>
+              + Create New SOW
+            </button>
+          </div>
+        ) : (
+          <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden", boxShadow:C.shadow }}>
+            <table style={{ width:"100%", borderCollapse:"collapse" }}>
+              <thead>
+                <tr style={{ background:C.surface }}>
+                  {["SOW Name","Client","Template","Version","Last Edited","Actions"].map(h => (
+                    <th key={h} style={{ padding:"10px 16px", textAlign:"left", fontSize:10, fontWeight:700, color:C.muted, letterSpacing:"0.07em", textTransform:"uppercase", borderBottom:`1px solid ${C.border}` }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((sow, i) => (
+                  <tr key={sow.id} style={{ borderTop:`1px solid ${C.border}`, cursor:"pointer", transition:"background 0.1s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.surface}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <td style={{ padding:"12px 16px", fontWeight:600, fontSize:13 }} onClick={() => onOpen(sow.id)}>{sow.name || "Untitled SOW"}</td>
+                    <td style={{ padding:"12px 16px", fontSize:12, color:C.muted }} onClick={() => onOpen(sow.id)}>{sow.client || "—"}</td>
+                    <td style={{ padding:"12px 16px" }} onClick={() => onOpen(sow.id)}>
+                      <span style={{ fontSize:10, background:C.accent+"22", color:C.accent, borderRadius:4, padding:"2px 8px", fontWeight:600 }}>{tplLabel(sow.template)}</span>
+                    </td>
+                    <td style={{ padding:"12px 16px", fontSize:12, fontFamily:"monospace", color:C.accent2, fontWeight:700 }} onClick={() => onOpen(sow.id)}>v{sow.version}</td>
+                    <td style={{ padding:"12px 16px", fontSize:11, color:C.muted }} onClick={() => onOpen(sow.id)}>{new Date(sow.lastEdited).toLocaleDateString("en-GB", { day:"numeric", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" })}</td>
+                    <td style={{ padding:"12px 16px" }}>
+                      <div style={{ display:"flex", gap:6 }}>
+                        <button onClick={() => onOpen(sow.id)} style={{ background:C.accent+"22", border:`1px solid ${C.accent}44`, borderRadius:6, color:C.accent, cursor:"pointer", padding:"4px 10px", fontSize:11, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif" }}>Open</button>
+                        <button onClick={() => handleDelete(sow.id)} style={{ background:"transparent", border:`1px solid ${C.border}`, borderRadius:6, color:C.muted, cursor:"pointer", padding:"4px 10px", fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}>Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════
+   SOW BUILDER PAGE
+═══════════════════════════════════════════════ */
+function SOWBuilderPage({ sowId: initialId, plannerData, onBack, onLibrary, apiKey, dark, C }) {
+  const isNew = !initialId;
+  const [sowId_]  = useState(() => initialId || newSowId());
+  const sowId     = sowId_;
+  const [template, setTemplate] = useState("t1");
+  const [projectInfo, setPI]    = useState({ projectName:"", clientName:"", clientContact:"", clientEmail:"", location:"", msaDate:"", effectiveDate:"", startDate:"", endDate:"", sowNumber:"", invoiceEmail:"", paymentDays:"45" });
+  const [docHistory, setDH]     = useState([{ version:"1.0", author:"", date:"", description:"First draft" }]);
+  const [sections, setSections] = useState({});
+  const [signatories, setSig]   = useState({ clientName:"", clientTitle:"", clientDate:"", vendorName:"", vendorTitle:"", vendorDate:"", vendorAddress:"", vendorPhone:"" });
+  const [openSecs, setOpenSecs] = useState({});
+  const [aiLoading, setAiLoading] = useState({});
+  const [aiSuggestion, setAiSug] = useState({});
+  const [saved, setSaved]       = useState(false);
+
+  // Load existing or init blank
+  useEffect(() => {
+    if (!isNew) {
+      const data = loadSowData(sowId);
+      if (data) {
+        setTemplate(data.template || "t1");
+        setPI(data.projectInfo || {});
+        setDH(data.docHistory || []);
+        setSections(data.sections || {});
+        setSig(data.signatories || {});
+        const open = {};
+        SOW_TEMPLATES[data.template || "t1"].sections.forEach(s => { open[s.id] = true; });
+        setOpenSecs(open);
+      }
+    } else {
+      const blank = blankSow("t1");
+      setSections(blank.sections);
+      const open = {};
+      SOW_TEMPLATES["t1"].sections.forEach(s => { open[s.id] = true; });
+      setOpenSecs(open);
+    }
+  }, []);
+
+  function switchTemplate(t) {
+    setTemplate(t);
+    const blank = blankSow(t);
+    setSections(prev => ({ ...blank.sections, ...prev }));
+    const open = {};
+    SOW_TEMPLATES[t].sections.forEach(s => { open[s.id] = true; });
+    setOpenSecs(open);
+  }
+
+  function save() {
+    const data = { id: sowId, template, projectInfo, docHistory, sections, signatories };
+    saveSowData(sowId, data);
+    const list = loadSowList();
+    const existing = list.findIndex(s => s.id === sowId);
+    const meta = { id: sowId, name: projectInfo.projectName || "Untitled SOW", client: projectInfo.clientName || "—", template, version: docHistory[docHistory.length-1]?.version || "1.0", lastEdited: new Date().toISOString() };
+    if (existing >= 0) list[existing] = meta; else list.unshift(meta);
+    saveSowList(list);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function generateAI(secId, secTitle) {
+    if (!apiKey) { alert("Please enter your Anthropic API key first."); return; }
+    setAiLoading(p => ({ ...p, [secId]: true }));
+    setAiSug(p => ({ ...p, [secId]: "" }));
+    try {
+      const context = `Project: ${projectInfo.projectName || "N/A"}\nClient: ${projectInfo.clientName || "N/A"}\nProject Type: ${plannerData?.projectType || "N/A"}\nRoles: ${plannerData?.roles?.map(r => r.name).join(", ") || "N/A"}\nTotal Revenue: ${plannerData ? fmt(plannerData.totalRevenue, "$", "USD") : "N/A"}\nTotal Hours: ${plannerData?.totalHours || "N/A"}h\nStart: ${projectInfo.startDate || "N/A"}  End: ${projectInfo.endDate || "N/A"}`;
+      const current = sections[secId] || "";
+      const text = await callClaude(apiKey, [{ role:"user", content:`You are a professional SOW writer. Write the "${secTitle}" section for a Statement of Work. Be concise, professional, and specific. Use [placeholders] for any client-specific details that need to be filled in. Do not use generic filler text.\n\nContext:\n${context}\n\nCurrent content (improve this if provided, otherwise write from scratch):\n${current}\n\nReturn only the section text, no headings or labels.` }], 600);
+      setAiSug(p => ({ ...p, [secId]: text }));
+    } catch (e) { alert("AI error: " + e.message); }
+    setAiLoading(p => ({ ...p, [secId]: false }));
+  }
+
+  function acceptSuggestion(secId) {
+    setSections(p => ({ ...p, [secId]: aiSuggestion[secId] }));
+    setAiSug(p => ({ ...p, [secId]: "" }));
+  }
+
+  // Build resource table rows from planner data
+  const resourceRows = plannerData?.roles?.map((r, i) => {
+    const s = plannerData.stats[i];
+    return { role: r.name, rate: fmtRate(r.wsr, "$", "USD"), hours: s.hours };
+  }) || [];
+
+  // Build financial table rows (by role)
+  const financialRows = plannerData?.roles?.map((r, i) => {
+    const s = plannerData.stats[i];
+    return { role: r.name, rate: fmtRate(r.wsr, "$", "USD"), hours: s.hours, amount: fmt(s.revenue, "$", "USD") };
+  }) || [];
+
+  function downloadPDF() {
+    window.print();
+  }
+
+  function downloadWord() {
+    const tpl = SOW_TEMPLATES[template];
+    const rows = resourceRows.map(r => `<tr><td>${r.role}</td><td></td><td></td><td>${r.rate}</td><td>${r.hours}h</td></tr>`).join("");
+    const fRows = financialRows.map(r => `<tr><td>${r.role}</td><td>${r.rate}</td><td>${r.hours}h</td><td>${r.amount}</td></tr>`).join("");
+    const histRows = docHistory.map((h, i) => `<tr><td>${i+1}</td><td>${h.version}</td><td>${h.author}</td><td>${h.date}</td><td>${h.description}</td></tr>`).join("");
+
+    let body = `
+      <h1>Statement of Work</h1>
+      <h2>${projectInfo.projectName || "[Project Name]"}</h2>
+      <table border="1" cellpadding="6" cellspacing="0" style="width:100%;margin-bottom:20px">
+        <tr><td><b>Project Name</b></td><td>${projectInfo.projectName || ""}</td></tr>
+        <tr><td><b>Client</b></td><td>${projectInfo.clientName || ""}</td></tr>
+        <tr><td><b>Location</b></td><td>${projectInfo.location || ""}</td></tr>
+        <tr><td><b>Client Contact</b></td><td>${projectInfo.clientContact || ""} ${projectInfo.clientEmail ? "\u003c" + projectInfo.clientEmail + "\u003e" : ""}</td></tr>
+      </table>
+      <h3>Document History</h3>
+      <table border="1" cellpadding="6" cellspacing="0" style="width:100%;margin-bottom:20px">
+        <tr><th>S No.</th><th>Version</th><th>Author</th><th>Date</th><th>Description</th></tr>
+        ${histRows}
+      </table>
+    `;
+
+    tpl.sections.forEach((sec, i) => {
+      body += `<h2>${i+1}. ${sec.title}</h2>\n`;
+      if (sec.auto && sec.id === "resourceDetails") {
+        body += `<table border="1" cellpadding="6" cellspacing="0" style="width:100%;margin-bottom:20px"><tr><th>Role</th><th>Name</th><th>Email</th><th>Rate/hr</th><th>Total Hours</th></tr>${rows}</table>`;
+      } else if (sec.auto && (sec.id === "financialCharges" || sec.id === "budgetTable")) {
+        body += `<table border="1" cellpadding="6" cellspacing="0" style="width:100%;margin-bottom:20px"><tr><th>Role</th><th>Rate/hr</th><th>Hours</th><th>Amount</th></tr>${fRows}<tr><td colspan="2"><b>Total</b></td><td><b>${plannerData?.totalHours || ""}h</b></td><td><b>${plannerData ? fmt(plannerData.totalRevenue,"$","USD") : ""}</b></td></tr></table>`;
+        if (sections.invoicingTerms) body += `<p>${(sections.invoicingTerms||"").replace(/\n/g,"<br/>")}</p>`;
+      } else if (sec.special === "sig") {
+        body += `<table border="1" cellpadding="12" cellspacing="0" style="width:100%"><tr><th>[Client Name]</th><th>[Vendor Name]</th></tr><tr><td>Name: ${signatories.clientName || ""}<br/>Title:<br/>Date:<br/>Signature:<br/><br/></td><td>Name: ${signatories.vendorName || ""}<br/>Title: ${signatories.vendorTitle || ""}<br/>Date: ${signatories.vendorDate || ""}<br/>Signature:<br/><br/></td></tr></table>`;
+      } else {
+        body += `<p>${(sections[sec.id] || "").replace(/\n/g,"<br/>")}</p>`;
+      }
+    });
+
+    const html = `<html><head><meta charset="UTF-8"><style>body{font-family:Calibri,sans-serif;font-size:11pt;line-height:1.5;margin:2cm}h1{font-size:20pt;color:#1a3356}h2{font-size:14pt;color:#2563eb;border-bottom:1px solid #dde3f0;padding-bottom:4px}h3{font-size:12pt}table{border-collapse:collapse}td,th{padding:6px 10px}th{background:#f0f4fb;font-weight:bold}</style></head><body>${body}</body></html>`;
+    const blob = new Blob([html], { type:"application/msword" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = (projectInfo.projectName || "SOW") + ".doc";
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  const secDefs = SOW_TEMPLATES[template]?.sections || [];
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bg, color:C.text, fontFamily:"'Space Grotesk',sans-serif", transition:"background 0.25s" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+      <style>{`@media print { .no-print { display:none!important; } body { background:white; } }`}</style>
+
+      {/* Top bar */}
+      <div className="no-print" style={{ padding:"11px 24px", display:"flex", alignItems:"center", justifyContent:"space-between", borderBottom:`1px solid ${C.border}`, background:C.card, position:"sticky", top:0, zIndex:100, boxShadow:C.shadow }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <button onClick={onBack} style={{ background:"transparent", border:`1px solid ${C.border}`, borderRadius:7, color:C.muted, cursor:"pointer", padding:"5px 11px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif" }}>← Planner</button>
+          <button onClick={onLibrary} style={{ background:"transparent", border:`1px solid ${C.border}`, borderRadius:7, color:C.muted, cursor:"pointer", padding:"5px 11px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif" }}>📄 SOW Library</button>
+          <div style={{ width:1, height:22, background:C.border }}/>
+          <span style={{ fontWeight:700, fontSize:14 }}>SOW Builder</span>
+          {saved && <span style={{ fontSize:11, color:C.accent2, background:C.accent2+"22", borderRadius:4, padding:"2px 8px" }}>✓ Saved</span>}
+        </div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <select value={template} onChange={e => switchTemplate(e.target.value)} style={{ background:C.inputBg, border:`1px solid ${C.border}`, borderRadius:8, color:C.text, padding:"6px 12px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+            {Object.entries(SOW_TEMPLATES).map(([k,v]) => <option key={k} value={k}>{v.name}</option>)}
+          </select>
+          <button onClick={save} style={{ background:C.accent+"22", border:`1px solid ${C.accent}`, borderRadius:7, color:C.accent, cursor:"pointer", padding:"6px 14px", fontSize:12, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif" }}>Save</button>
+          <button onClick={downloadPDF} style={{ background:C.accent3+"22", border:`1px solid ${C.accent3}`, borderRadius:7, color:C.accent3, cursor:"pointer", padding:"6px 14px", fontSize:12, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif" }}>↓ PDF</button>
+          <button onClick={downloadWord} style={{ background:C.accent2+"22", border:`1px solid ${C.accent2}`, borderRadius:7, color:C.accent2, cursor:"pointer", padding:"6px 14px", fontSize:12, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif" }}>↓ Word</button>
+        </div>
+      </div>
+
+      <div style={{ padding:"20px 24px 60px" }}>
+
+        {/* Project info */}
+        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px", marginBottom:14, boxShadow:C.shadow }}>
+          <div style={{ fontSize:10, fontWeight:700, color:C.muted, letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:12 }}>Project Information</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:10 }}>
+            {[
+              ["projectName","Project Name"], ["clientName","Client / Customer"], ["clientContact","Client Contact Name"],
+              ["clientEmail","Client Contact Email"], ["location","Location"], ["sowNumber","SOW Number"],
+              ["msaDate","MSA Reference Date","date"], ["effectiveDate","SOW Effective Date","date"],
+              ["startDate","Start Date","date"], ["endDate","End Date","date"],
+              ["invoiceEmail","Invoice Email"], ["paymentDays","Payment Terms (days)"],
+            ].map(([key, label, type]) => (
+              <div key={key}>
+                <div style={{ fontSize:9, color:C.muted, fontWeight:700, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:3 }}>{label}</div>
+                <input type={type || "text"} value={projectInfo[key] || ""} onChange={e => setPI(p => ({ ...p, [key]: e.target.value }))}
+                  style={{ width:"100%", background:C.inputBg, border:`1px solid ${C.border}`, borderRadius:6, color:C.text, padding:"6px 8px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Document history */}
+        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden", marginBottom:14, boxShadow:C.shadow }}>
+          <div style={{ padding:"11px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", borderBottom:`1px solid ${C.border}` }}>
+            <span style={{ fontSize:10, fontWeight:700, color:C.muted, letterSpacing:"0.07em", textTransform:"uppercase" }}>Document History</span>
+            <button onClick={() => setDH(p => [...p, { version:`${p.length+1}.0`, author:"", date:"", description:"" }])}
+              style={{ background:"transparent", border:`1px solid ${C.border}`, borderRadius:6, color:C.muted, cursor:"pointer", padding:"3px 10px", fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}>+ Add Version</button>
+          </div>
+          <table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead>
+              <tr style={{ background:C.surface }}>
+                {["#","Version","Author","Date","Description"].map(h => (
+                  <th key={h} style={{ padding:"7px 14px", textAlign:"left", fontSize:9, fontWeight:700, color:C.muted, letterSpacing:"0.06em", textTransform:"uppercase" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {docHistory.map((row, i) => (
+                <tr key={i} style={{ borderTop:`1px solid ${C.border}` }}>
+                  <td style={{ padding:"6px 14px", fontSize:12, color:C.muted, width:30 }}>{i+1}</td>
+                  {["version","author","date","description"].map(f => (
+                    <td key={f} style={{ padding:"6px 14px" }}>
+                      <input type={f==="date"?"date":"text"} value={row[f]||""} onChange={e => setDH(p => p.map((r,j) => j===i ? {...r,[f]:e.target.value} : r))}
+                        style={{ border:"none", background:"transparent", fontSize:12, color:C.text, width:"100%", outline:"none", fontFamily:f==="version"?"monospace":"'Space Grotesk',sans-serif" }}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Sections */}
+        {secDefs.map((sec, idx) => {
+          const open = !!openSecs[sec.id];
+          return (
+            <div key={sec.id} style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:12, marginBottom:10, overflow:"hidden", boxShadow:C.shadow }}>
+              <div onClick={() => setOpenSecs(p => ({...p,[sec.id]:!p[sec.id]}))}
+                style={{ padding:"12px 18px", display:"flex", alignItems:"center", gap:10, cursor:"pointer", userSelect:"none" }}>
+                <div style={{ width:18, height:18, borderRadius:4, background:open?C.accent+"22":C.surface, border:`1px solid ${open?C.accent+"66":C.border}`, color:open?C.accent:C.muted, display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:900, flexShrink:0 }}>{open?"▾":"▸"}</div>
+                <span style={{ fontSize:10, color:C.muted, fontWeight:700, minWidth:20 }}>{idx+1}.</span>
+                <span style={{ fontSize:13, fontWeight:600, flex:1 }}>{sec.title}</span>
+                {sec.auto && <span style={{ fontSize:10, background:C.accent2+"22", color:C.accent2, borderRadius:4, padding:"2px 8px", fontWeight:600 }}>✓ Auto from Planner</span>}
+                {sec.ai && (
+                  <button onClick={e => { e.stopPropagation(); generateAI(sec.id, sec.title); }}
+                    disabled={aiLoading[sec.id]}
+                    style={{ background:"transparent", border:`1px solid ${C.accent}44`, borderRadius:6, color:C.accent, cursor:"pointer", padding:"3px 10px", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", display:"flex", alignItems:"center", gap:4 }}>
+                    {aiLoading[sec.id] ? "⏳ Writing..." : "✨ AI Assist"}
+                  </button>
+                )}
+              </div>
+
+              {open && (
+                <div style={{ padding:"0 18px 16px", borderTop:`1px solid ${C.border}` }}>
+
+                  {/* AI suggestion box */}
+                  {aiSuggestion[sec.id] && (
+                    <div style={{ background:C.accent+"11", border:`1px solid ${C.accent}44`, borderRadius:8, padding:"12px 14px", margin:"12px 0" }}>
+                      <div style={{ fontSize:10, fontWeight:700, color:C.accent, letterSpacing:"0.05em", marginBottom:6 }}>✨ AI SUGGESTION</div>
+                      <div style={{ fontSize:12, color:C.text, lineHeight:1.7, whiteSpace:"pre-wrap" }}>{aiSuggestion[sec.id]}</div>
+                      <div style={{ display:"flex", gap:8, marginTop:10 }}>
+                        <button onClick={() => acceptSuggestion(sec.id)} style={{ background:C.accent, border:"none", borderRadius:6, color:"#fff", padding:"5px 14px", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif" }}>✓ Accept</button>
+                        <button onClick={() => setAiSug(p => ({...p,[sec.id]:""}))} style={{ background:"transparent", border:`1px solid ${C.border}`, borderRadius:6, color:C.muted, padding:"5px 12px", fontSize:11, cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif" }}>Discard</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Auto-populated: Resource table */}
+                  {sec.auto && sec.id === "resourceDetails" && (
+                    <div style={{ marginTop:12 }}>
+                      <div style={{ fontSize:11, color:C.muted, marginBottom:8 }}>The table below is auto-populated from the planner. Add resource names and emails.</div>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                        <thead><tr style={{ background:C.surface }}>
+                          {["Role","Name","Email","Rate / hr (Sell)","Total Hours"].map(h => <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:9, fontWeight:700, color:C.muted, letterSpacing:"0.06em", textTransform:"uppercase", borderBottom:`1px solid ${C.border}` }}>{h}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {resourceRows.map((r, i) => (
+                            <tr key={i} style={{ borderTop:`1px solid ${C.border}` }}>
+                              <td style={{ padding:"8px 12px", fontWeight:600 }}>{r.role}</td>
+                              <td style={{ padding:"8px 12px" }}><input style={{ border:"none", background:C.inputBg, borderRadius:4, padding:"3px 6px", fontSize:12, color:C.text, width:130, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }} placeholder="Resource name"/></td>
+                              <td style={{ padding:"8px 12px" }}><input style={{ border:"none", background:C.inputBg, borderRadius:4, padding:"3px 6px", fontSize:12, color:C.text, width:170, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }} placeholder="email@company.com"/></td>
+                              <td style={{ padding:"8px 12px", fontFamily:"monospace", color:C.accent2, fontWeight:700 }}>{r.rate}</td>
+                              <td style={{ padding:"8px 12px", fontFamily:"monospace", color:C.accent }}>{r.hours}h</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Auto-populated: Financial table */}
+                  {sec.auto && (sec.id === "financialCharges" || sec.id === "budgetTable" || sec.id === "paymentSchedule") && (
+                    <div style={{ marginTop:12 }}>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                        <thead><tr style={{ background:C.surface }}>
+                          {["Role","Rate/hr ($)","Total Hours","Amount ($)"].map(h => <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:9, fontWeight:700, color:C.muted, letterSpacing:"0.06em", textTransform:"uppercase", borderBottom:`1px solid ${C.border}` }}>{h}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {financialRows.map((r, i) => (
+                            <tr key={i} style={{ borderTop:`1px solid ${C.border}` }}>
+                              <td style={{ padding:"8px 12px", fontWeight:600 }}>{r.role}</td>
+                              <td style={{ padding:"8px 12px", fontFamily:"monospace" }}>{r.rate}</td>
+                              <td style={{ padding:"8px 12px", fontFamily:"monospace", color:C.accent }}>{r.hours}h</td>
+                              <td style={{ padding:"8px 12px", fontFamily:"monospace", color:C.accent2, fontWeight:700 }}>{r.amount}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot><tr style={{ borderTop:`2px solid ${C.border}`, background:C.surface }}>
+                          <td colSpan={2} style={{ padding:"8px 12px", fontSize:11, color:C.muted, fontWeight:700 }}>TOTAL</td>
+                          <td style={{ padding:"8px 12px", fontFamily:"monospace", color:C.accent, fontWeight:700 }}>{plannerData?.totalHours || 0}h</td>
+                          <td style={{ padding:"8px 12px", fontFamily:"monospace", color:C.accent2, fontWeight:800, fontSize:14 }}>{plannerData ? fmt(plannerData.totalRevenue,"$","USD") : "$0"}</td>
+                        </tr></tfoot>
+                      </table>
+                      <div style={{ marginTop:12 }}>
+                        <div style={{ fontSize:9, color:C.muted, fontWeight:700, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:4 }}>Invoicing Terms</div>
+                        <textarea value={sections.invoicingTerms||""} onChange={e => setSections(p=>({...p,invoicingTerms:e.target.value}))} rows={3}
+                          placeholder="e.g. This is a time and materials contract. Invoices to be submitted monthly to [invoice email]. Payment within [X] days."
+                          style={{ width:"100%", background:C.inputBg, border:`1px solid ${C.border}`, borderRadius:8, color:C.text, padding:"8px 10px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif", resize:"vertical", outline:"none", lineHeight:1.6, boxSizing:"border-box" }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Contract summary for CO */}
+                  {sec.auto && sec.id === "contractSummary" && (
+                    <div style={{ marginTop:12 }}>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                        <thead><tr style={{ background:C.surface }}>
+                          {["Document","Effective Date","Value (USD)","Total Contract (USD)"].map(h => <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:9, fontWeight:700, color:C.muted, letterSpacing:"0.06em", textTransform:"uppercase", borderBottom:`1px solid ${C.border}` }}>{h}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          <tr style={{ borderTop:`1px solid ${C.border}` }}>
+                            <td style={{ padding:"8px 12px" }}>SOW #{projectInfo.sowNumber || "[#]"}</td>
+                            <td style={{ padding:"8px 12px" }}>{projectInfo.effectiveDate || "—"}</td>
+                            <td style={{ padding:"8px 12px", fontFamily:"monospace", color:C.accent2 }}>—</td>
+                            <td style={{ padding:"8px 12px", fontFamily:"monospace", color:C.accent2 }}>{plannerData ? fmt(plannerData.totalRevenue,"$","USD") : "—"}</td>
+                          </tr>
+                          <tr style={{ borderTop:`1px solid ${C.border}`, background:C.surface }}>
+                            <td style={{ padding:"8px 12px", fontWeight:700 }}>Change Order #1</td>
+                            <td style={{ padding:"8px 12px" }}>{projectInfo.startDate || "—"}</td>
+                            <td style={{ padding:"8px 12px", fontFamily:"monospace", color:C.accent2, fontWeight:700 }}>{plannerData ? fmt(plannerData.totalRevenue,"$","USD") : "—"}</td>
+                            <td style={{ padding:"8px 12px", fontFamily:"monospace", color:C.accent2, fontWeight:800 }}>{plannerData ? fmt(plannerData.totalRevenue * 2,"$","USD") : "—"}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Signatures */}
+                  {sec.special === "sig" && (
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginTop:12 }}>
+                      {[
+                        { label:"Client", keys:["clientName","clientTitle","clientDate"] },
+                        { label:"Vendor", keys:["vendorName","vendorTitle","vendorDate"] },
+                      ].map(party => (
+                        <div key={party.label} style={{ border:`1px solid ${C.border}`, borderRadius:8, padding:14 }}>
+                          <div style={{ fontSize:10, fontWeight:700, color:C.muted, letterSpacing:"0.07em", textTransform:"uppercase", textAlign:"center", padding:"5px", background:C.surface, borderRadius:5, marginBottom:10 }}>{party.label}</div>
+                          {party.keys.map(k => (
+                            <div key={k} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                              <span style={{ fontSize:11, color:C.muted, width:50, flexShrink:0 }}>{k.replace(/([A-Z])/g," $1").split(" ").slice(1).join(" ") || "Name"}:</span>
+                              <input value={signatories[k]||""} onChange={e => setSig(p=>({...p,[k]:e.target.value}))} type={k.includes("Date")?"date":"text"}
+                                style={{ flex:1, border:"none", background:C.inputBg, borderRadius:4, padding:"3px 6px", fontSize:12, color:C.text, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}
+                              />
+                            </div>
+                          ))}
+                          <div style={{ borderBottom:`1px solid ${C.text}`, minHeight:48, marginTop:16 }}/>
+                          <div style={{ fontSize:10, color:C.muted, marginTop:4, textAlign:"center" }}>Signature</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Regular editable text section */}
+                  {!sec.auto && sec.special !== "sig" && (
+                    <textarea value={sections[sec.id]||""} onChange={e => setSections(p=>({...p,[sec.id]:e.target.value}))} rows={5}
+                      placeholder={`Enter content for ${sec.title}...`}
+                      style={{ width:"100%", background:C.inputBg, border:`1px solid ${C.border}`, borderRadius:8, color:C.text, padding:"10px 12px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif", resize:"vertical", outline:"none", lineHeight:1.7, boxSizing:"border-box", marginTop:12, transition:"border-color 0.15s" }}
+                      onFocus={e => e.target.style.borderColor=C.accent}
+                      onBlur={e => e.target.style.borderColor=C.border}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [dark, setDark]         = useState(false);
   const C                        = THEMES[dark ? "dark" : "light"];
@@ -1582,6 +2141,21 @@ export default function App() {
   const [loadedFromAI, setLoaded] = useState(false);
   const [projectType, setPT]    = useState("");
   const [apiKey, setApiKey]     = useState("");
+  const [sowOpenId, setSowOpenId] = useState(null);
+
+  const stats = useMemo(() => roles.map(r => {
+    const total = r.weekAllocations.slice(0, numWeeks).reduce((a, b) => a + b, 0);
+    const hours = total * (r.hoursPerWeek ?? 40);
+    const cost = hours * r.rate; const revenue = hours * r.wsr;
+    return { total, hours, cost, revenue, margin: revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0 };
+  }), [roles, numWeeks]);
+
+  const plannerData = {
+    roles, stats, numWeeks, projectType,
+    totalHours: stats.reduce((a, s) => a + s.hours, 0),
+    totalRevenue: stats.reduce((a, s) => a + s.revenue, 0),
+    totalCost: stats.reduce((a, s) => a + s.cost, 0),
+  };
 
   function handleLoad({ roles: r, numWeeks: nw, projectType: pt }) {
     setRoles(r); setNumWeeks(nw); setPT(pt); setLoaded(true); setPage("planner");
@@ -1593,14 +2167,30 @@ export default function App() {
   if (page === "landing") {
     return <LandingPage onEnter={() => setPage("intake")} />;
   }
-
   if (page === "intake") {
     return <IntakePage onLoad={handleLoad} onSkip={handleSkip}
       apiKey={apiKey} setApiKey={setApiKey} dark={dark} setDark={setDark}/>;
   }
+  if (page === "sow-library") {
+    return <SOWLibraryPage
+      onBack={() => setPage("planner")}
+      onOpen={id => { setSowOpenId(id); setPage("sow-builder"); }}
+      onNew={() => { setSowOpenId(null); setPage("sow-builder"); }}
+      dark={dark} C={C}/>;
+  }
+  if (page === "sow-builder") {
+    return <SOWBuilderPage
+      sowId={sowOpenId}
+      plannerData={plannerData}
+      onBack={() => setPage("planner")}
+      onLibrary={() => setPage("sow-library")}
+      apiKey={apiKey} dark={dark} C={C}/>;
+  }
   return <PlannerPage roles={roles} setRoles={setRoles}
     numWeeks={numWeeks} setNumWeeks={setNumWeeks}
     loadedFromAI={loadedFromAI} projectType={projectType}
-    apiKey={apiKey} onBack={()=>setPage("intake")}
+    apiKey={apiKey} onBack={() => setPage("intake")}
+    onGenerateSOW={() => { setSowOpenId(null); setPage("sow-builder"); }}
+    onSOWLibrary={() => setPage("sow-library")}
     dark={dark} setDark={setDark} C={C}/>;
 }
