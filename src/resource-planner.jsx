@@ -730,14 +730,11 @@ Rules:
           </div>
           <span style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>Resource Effort Planner</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <ThemeToggle dark={dark} setDark={setDark} C={THEMES[dark ? "dark" : "light"]}/>
-          <button onClick={onSkip} style={{
+        <button onClick={onSkip} style={{
             background: "transparent", border: "1px solid rgba(255,255,255,0.2)",
             borderRadius: 8, color: "#8aaac4", cursor: "pointer",
             padding: "6px 14px", fontSize: 12, fontFamily: "'Space Grotesk',sans-serif",
           }}>Skip → Open blank planner</button>
-        </div>
       </div>
 
       {/* ── Content ── */}
@@ -861,20 +858,7 @@ Rules:
             </div>
           </div>
 
-          {/* Project type */}
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, color: "#7c86a2", marginBottom: 6, fontWeight: 600 }}>
-              Project type <span style={{ fontWeight: 400 }}>(optional — helps AI suggest roles)</span>
-            </div>
-            <input type="text" value={projectDesc} onChange={e => setProjectDesc(e.target.value)}
-              placeholder="e.g. e-commerce migration, CRM rollout, data warehouse..."
-              style={{
-                width: "100%", background: "#fff", border: "1px solid #dde3f0",
-                borderRadius: 8, color: IL.text, padding: "8px 12px", fontSize: 13,
-                outline: "none", fontFamily: "'Space Grotesk',sans-serif", boxSizing: "border-box",
-              }}
-            />
-          </div>
+
 
           {/* Error */}
           {error && (
