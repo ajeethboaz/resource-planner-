@@ -919,10 +919,11 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
   const [sprintHours, setSH]              = useState(40);
   const [showSettings, setShowSet]        = useState(false);
   const [showTable, setShowTable]         = useState(true);
-  const [showEngine, setShowEngine]       = useState(true);
-  const [showBreakdown, setShowBreakdown] = useState(true);
-  const [showCommentary, setShowCommentary] = useState(false);
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  const [showAI, setShowAI]               = useState(false);
+  const [expandedRows, setExpandedRows]   = useState({});
   const [targetMargin, setTM]             = useState(30);
+  const [marginMode, setMarginMode]       = useState("wsr");
   const sym = SYMBOLS[currency];
 
   function changeWeeks(n) {
@@ -947,6 +948,14 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
   }]);
   const delR  = id => setRoles(p=>p.filter(r=>r.id!==id));
   const fillW = (id,v) => setRoles(p=>p.map(r=>r.id===id?{...r,weekAllocations:Array(numWeeks).fill(v)}:r));
+  const toggleRow = (id) => setExpandedRows(p=>({...p,[id]:!p[id]}));
+
+  const applyMargin = (id) => setRoles(prev => prev.map(r => {
+    if (id && r.id !== id) return r;
+    return marginMode === "wsr"
+      ? { ...r, wsr: r2(r.rate / (1 - targetMargin / 100)) }
+      : { ...r, rate: r2(r.wsr * (1 - targetMargin / 100)) };
+  }));
 
   const stats = useMemo(()=>roles.map(r=>{
     const total=r.weekAllocations.slice(0,numWeeks).reduce((a,b)=>a+b,0);
@@ -959,43 +968,33 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
   const totalRevenueUSD = stats.reduce((a,s)=>a+s.revenue,0);
   const totalHours      = stats.reduce((a,s)=>a+s.hours,0);
   const overallMargin   = totalRevenueUSD>0?((totalRevenueUSD-totalCostUSD)/totalRevenueUSD)*100:0;
+  const gap             = overallMargin - targetMargin;
   const BAR_COLORS      = [C.accent,C.accent2,C.accent3,"#c084fc","#f472b6"];
+
+  const gapColor = gap >= 5 ? C.success : gap >= 0 ? C.accent2 : gap >= -5 ? C.warning : C.danger;
+  const gapLabel = (gap >= 0 ? "+" : "") + gap.toFixed(1) + "%";
 
   return (
     <div style={{
       minHeight:"100vh", background:C.bg, color:C.text,
       fontFamily:"'Space Grotesk','Segoe UI',sans-serif",
-      padding:"0", transition:"background 0.25s,color 0.25s",
+      position:"relative", transition:"background 0.25s,color 0.25s",
     }}>
       <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
 
+      {/* ── TOP BAR ── */}
       <div style={{
-        padding:"14px 24px", display:"flex", alignItems:"center",
+        padding:"12px 24px", display:"flex", alignItems:"center",
         justifyContent:"space-between", borderBottom:`1px solid ${C.border}`,
         background:C.card, position:"sticky", top:0, zIndex:100, boxShadow:C.shadow,
       }}>
-        <div style={{display:"flex",alignItems:"center",gap:12}}>
-          <button onClick={onBack} style={{
-            background:"transparent", border:`1px solid ${C.border}`,
-            borderRadius:8, color:C.muted, cursor:"pointer",
-            padding:"6px 12px", fontSize:12, fontFamily:"'Space Grotesk',sans-serif",
-          }}>← Intake</button>
-          <div style={{width:1,height:24,background:C.border}}/>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{
-              width:28,height:28,borderRadius:7,fontSize:14,
-              background:`linear-gradient(135deg,${C.accent},${C.accent2})`,
-              display:"flex",alignItems:"center",justifyContent:"center",
-            }}>⚡</div>
-            <div>
-              <div style={{fontWeight:700,fontSize:14}}>Resource Effort Planner</div>
-              <div style={{fontSize:10,color:C.muted,display:"flex",alignItems:"center",gap:4}}>
-                <span style={{background:C.accent2+"22",color:C.accent2,borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:700}}>PLANNER</span>
-                {loadedFromAI&&<span style={{background:C.accent+"22",color:C.accent,borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:600}}>✨ {roles.length} roles loaded from AI</span>}
-                {projectType&&<span style={{color:C.muted}}>· {projectType}</span>}
-              </div>
-            </div>
-          </div>
+        <div style={{display:"flex",alignItems:"center",gap:9}}>
+          <div style={{
+            width:28,height:28,borderRadius:7,fontSize:14,
+            background:`linear-gradient(135deg,${C.accent},${C.accent2})`,
+            display:"flex",alignItems:"center",justifyContent:"center",
+          }}>⚡</div>
+          <span style={{fontWeight:700,fontSize:14}}>Resource Effort Planner</span>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <ThemeToggle dark={dark} setDark={setDark} C={C}/>
@@ -1004,8 +1003,10 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
         </div>
       </div>
 
-      <div style={{padding:"24px"}}>
-        {showSettings&&(
+      <div style={{padding:"20px 24px 80px"}}>
+
+        {/* ── SETTINGS ── */}
+        {showSettings && (
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,marginBottom:20,display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-end",boxShadow:C.shadow}}>
             <div>
               <div style={{fontSize:11,color:C.muted,fontWeight:600,letterSpacing:"0.06em",marginBottom:6}}>WEEKS</div>
@@ -1022,145 +1023,301 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
           </div>
         )}
 
-        <div style={{display:"flex",gap:10,marginBottom:20,flexWrap:"wrap"}}>
+        {/* ── SUMMARY CARDS ── */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:12}}>
           {[
-            {label:"Total Revenue",value:fmt(totalRevenueUSD,sym,currency),color:C.accent2,icon:"📈"},
-            {label:"Total Cost",value:fmt(totalCostUSD,sym,currency),color:C.accent3,icon:"💸"},
-            {label:"Overall Margin",value:`${overallMargin.toFixed(1)}%`,color:marginColor(overallMargin,targetMargin,C),icon:"🎯"},
-            {label:"Total Hours",value:`${totalHours.toLocaleString()}h`,color:C.accent,icon:"⏱"},
-            {label:"Roles",value:roles.length,color:C.muted,icon:"👥"},
+            {label:"Total Revenue", value:fmt(totalRevenueUSD,sym,currency), color:C.accent2, icon:"📈", pct:Math.min(100,totalRevenueUSD/200000*100)},
+            {label:"Total Cost",    value:fmt(totalCostUSD,sym,currency),    color:C.accent3, icon:"💸", pct:Math.min(100,totalCostUSD/200000*100)},
+            {label:"Overall Margin",value:`${overallMargin.toFixed(1)}%`,   color:gapColor,  icon:"🎯", pct:Math.min(100,overallMargin)},
+            {label:"Total Hours",   value:`${totalHours.toLocaleString()}h`, color:C.accent,  icon:"⏱", pct:Math.min(100,totalHours/1000*100)},
+            {label:"Roles",         value:roles.length,                       color:C.muted,   icon:"👥", pct:Math.min(100,roles.length/10*100)},
           ].map(card=>(
-            <div key={card.label} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 18px",flex:"1 1 110px",minWidth:110,boxShadow:C.shadow}}>
-              <div style={{fontSize:10,color:C.muted,fontWeight:600,letterSpacing:"0.06em",marginBottom:4}}>{card.icon} {card.label.toUpperCase()}</div>
-              <div style={{fontSize:20,fontWeight:700,color:card.color,fontFamily:"'JetBrains Mono',monospace"}}>{card.value}</div>
+            <div key={card.label} style={{
+              background:C.card, border:`1px solid ${C.border}`, borderRadius:12,
+              padding:"14px 16px", boxShadow:C.shadow, position:"relative", overflow:"hidden",
+              transition:"border-color 0.2s",
+            }}>
+              <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:"0.07em",marginBottom:6,textTransform:"uppercase"}}>{card.icon} {card.label}</div>
+              <div style={{fontSize:22,fontWeight:700,color:card.color,fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-1px",lineHeight:1}}>{card.value}</div>
+              {card.label === "Overall Margin" && (
+                <div style={{fontSize:10,color:C.muted,marginTop:4}}>{gapLabel} vs target</div>
+              )}
+              <div style={{position:"absolute",bottom:0,left:0,right:0,height:3,background:C.border}}>
+                <div style={{height:"100%",width:`${card.pct}%`,background:card.color,transition:"width 0.5s"}}/>
+              </div>
             </div>
           ))}
         </div>
 
+        {/* ── MARGIN ENGINE (inline) ── */}
+        <div style={{
+          background:C.engineBg, border:`1px solid ${C.accent}33`,
+          borderRadius:12, padding:"14px 18px", marginBottom:20,
+          display:"flex", alignItems:"center", gap:16, flexWrap:"wrap",
+        }}>
+          <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+            <div>
+              <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:"0.07em",marginBottom:3,textTransform:"uppercase"}}>Current</div>
+              <span style={{fontSize:26,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-1px",color:gapColor}}>{overallMargin.toFixed(1)}%</span>
+            </div>
+            <div style={{fontSize:18,color:C.border}}>→</div>
+            <div>
+              <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:"0.07em",marginBottom:3,textTransform:"uppercase"}}>Target</div>
+              <div style={{display:"flex",alignItems:"center",gap:4}}>
+                <input type="number" value={targetMargin} min={0} max={99} step={1}
+                  onChange={e=>setTM(parseFloat(e.target.value)||0)}
+                  style={{background:C.inputBg,border:`2px solid ${C.accent}`,borderRadius:7,color:C.accent,padding:"3px 6px",fontSize:20,fontWeight:800,width:68,outline:"none",textAlign:"center",fontFamily:"'JetBrains Mono',monospace"}}
+                />
+                <span style={{color:C.accent,fontSize:20,fontWeight:800}}>%</span>
+              </div>
+            </div>
+            <div>
+              <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:"0.07em",marginBottom:3,textTransform:"uppercase"}}>Gap</div>
+              <span style={{fontSize:13,fontWeight:700,fontFamily:"monospace",padding:"3px 10px",borderRadius:5,background:gapColor+"22",color:gapColor,border:`1px solid ${gapColor}44`}}>{gapLabel}</span>
+            </div>
+          </div>
+
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.muted,marginBottom:5}}>
+              <span>0%</span>
+              <span>Target {targetMargin}% · Current {overallMargin.toFixed(1)}%</span>
+              <span>100%</span>
+            </div>
+            <div style={{height:7,background:C.border,borderRadius:4,overflow:"hidden",marginBottom:9}}>
+              <div style={{height:"100%",width:`${Math.min(100,overallMargin)}%`,background:gapColor,borderRadius:4,transition:"width 0.4s,background 0.4s"}}/>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              {[{key:"wsr",label:"🔧 Adjust WSR"},{key:"rate",label:"🔧 Adjust CBR"}].map(opt=>(
+                <button key={opt.key} onClick={()=>setMarginMode(opt.key)} style={{
+                  flex:1,background:marginMode===opt.key?C.accent+"22":"transparent",
+                  border:`1px solid ${marginMode===opt.key?C.accent:C.border}`,
+                  borderRadius:6,color:marginMode===opt.key?C.accent:C.muted,
+                  cursor:"pointer",padding:"5px 6px",fontSize:10,fontFamily:"'Space Grotesk',sans-serif",transition:"all 0.15s",
+                }}>{opt.label}</button>
+              ))}
+              <button onClick={()=>applyMargin(null)} style={{
+                background:`linear-gradient(135deg,${C.accent}cc,${C.accent2}cc)`,
+                border:"none",borderRadius:6,color:"#fff",cursor:"pointer",
+                padding:"5px 14px",fontSize:11,fontWeight:700,fontFamily:"'Space Grotesk',sans-serif",whiteSpace:"nowrap",
+              }}>Apply to All →</button>
+            </div>
+          </div>
+        </div>
+
+        {/* ── RESOURCE LOADING ── */}
         <SectionHeader label="RESOURCE LOADING" open={showTable} onToggle={()=>setShowTable(s=>!s)} badge={`${roles.length} roles · ${numWeeks} weeks`} C={C}/>
-        {showTable&&(<>
+        {showTable && (<>
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,overflow:"auto",marginBottom:14,boxShadow:C.shadow}}>
-            <table style={{width:"100%",borderCollapse:"collapse",minWidth:820}}>
+            <table style={{width:"100%",borderCollapse:"collapse",minWidth:460}}>
               <thead>
                 <tr style={{background:C.surface}}>
-                  <th style={TH(C,150)}>ROLE</th>
-                  <th style={TH(C,90)}>CBR ({sym})</th>
-                  <th style={TH(C,90,C.accent2)}>WSR ({sym})</th>
-                  <th style={TH(C,76,marginColor(overallMargin,targetMargin,C))}>MARGIN %</th>
-                  <th style={TH(C,76)}>HRS/WK</th>
-                  {weekLabels.map((w,i)=>(
-                    <th key={i} style={TH(C,66)}>
-                      {editLabel===i?(
-                        <input autoFocus value={w}
-                          onChange={e=>setWeekLabels(p=>p.map((l,j)=>j===i?e.target.value:l))}
-                          onBlur={()=>setEditLabel(null)}
-                          onKeyDown={e=>e.key==="Enter"&&setEditLabel(null)}
-                          style={{background:"transparent",border:"none",color:C.accent,width:46,textAlign:"center",fontFamily:"'JetBrains Mono',monospace",fontSize:11,fontWeight:700,outline:`1px solid ${C.accent}`,borderRadius:4,padding:"2px 4px"}}
-                        />
-                      ):(
-                        <span style={{cursor:"pointer",borderBottom:`1px dashed ${C.border}`}} title="Click to rename" onClick={()=>setEditLabel(i)}>{w}</span>
-                      )}
-                    </th>
-                  ))}
-                  <th style={TH(C,60,C.accent2)}>TOTAL</th>
-                  <th style={TH(C,66,C.accent)}>HOURS</th>
-                  <th style={TH(C,92,C.accent3)}>COST</th>
-                  <th style={TH(C,92,C.accent2)}>REVENUE</th>
+                  <th style={{...TH(C,24)}}></th>
+                  <th style={TH(C,140)}>ROLE</th>
+                  <th style={TH(C,80,marginColor(overallMargin,targetMargin,C))}>MARGIN</th>
+                  <th style={TH(C,120)}>ALLOCATIONS</th>
+                  <th style={{...TH(C,70,C.accent),textAlign:"right"}}>HOURS</th>
+                  <th style={{...TH(C,90,C.accent3),textAlign:"right"}}>COST</th>
+                  <th style={{...TH(C,90,C.accent2),textAlign:"right"}}>REVENUE</th>
                   <th style={TH(C,44)}></th>
                 </tr>
               </thead>
               <tbody>
                 {roles.map((role,ri)=>{
                   const s=stats[ri]; const mc=marginColor(s.margin,targetMargin,C);
+                  const expanded=!!expandedRows[role.id];
                   return (
-                    <tr key={role.id} style={{borderTop:`1px solid ${C.border}`,transition:"background 0.1s"}}
-                      onMouseEnter={e=>e.currentTarget.style.background=C.surface}
-                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                      <td style={TD}><TextInput value={role.name} onChange={v=>upd(role.id,"name",v)} extraStyle={{fontWeight:600,fontSize:14}} C={C}/></td>
-                      <td style={TD}><RateInput usdValue={role.rate} onUsdChange={v=>upd(role.id,"rate",v)} currency={currency} C={C}/></td>
-                      <td style={TD}><RateInput usdValue={role.wsr} onUsdChange={v=>upd(role.id,"wsr",v)} currency={currency} C={C} highlight={C.accent2}/></td>
-                      <td style={{...TD,textAlign:"center"}}><Badge color={mc} size={12}>{s.margin.toFixed(1)}%</Badge></td>
-                      <td style={TD}><NumInput value={role.hoursPerWeek??sprintHours} onChange={v=>upd(role.id,"hoursPerWeek",v)} step={1} min={1} C={C}/></td>
-                      {role.weekAllocations.slice(0,numWeeks).map((w,wi)=>(
-                        <td key={wi} style={TD}>
-                          <NumInput value={w} onChange={v=>updW(role.id,wi,Math.min(1,Math.max(0,v)))} step={0.1} C={C} extraStyle={{color:w===1?C.accent2:w===0?C.muted:C.text}}/>
+                    <>
+                      <tr key={role.id}
+                        style={{borderTop:`1px solid ${C.border}`,cursor:"pointer",transition:"background 0.1s"}}
+                        onMouseEnter={e=>e.currentTarget.style.background=C.surface}
+                        onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                      >
+                        <td style={{...TD,paddingRight:0}} onClick={()=>toggleRow(role.id)}>
+                          <span style={{fontSize:9,color:C.muted,display:"inline-block",transition:"transform 0.2s",transform:expanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>
                         </td>
-                      ))}
-                      <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:C.accent2,fontSize:13}}>{s.total.toFixed(1)}</span></td>
-                      <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",color:C.accent,fontSize:12}}>{s.hours}h</span></td>
-                      <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,color:C.accent3,fontSize:13}}>{fmt(s.cost,sym,currency)}</span></td>
-                      <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:C.accent2,fontSize:13}}>{fmt(s.revenue,sym,currency)}</span></td>
-                      <td style={TD}>
-                        <div style={{display:"flex",gap:2}}>
-                          <IconBtn onClick={()=>fillW(role.id,role.weekAllocations[0])} title="Fill all weeks" color={C.accent} C={C}>↔</IconBtn>
+                        <td style={TD} onClick={()=>toggleRow(role.id)}>
+                          <span style={{fontWeight:700,fontSize:14}}>{role.name}</span>
+                        </td>
+                        <td style={TD} onClick={()=>toggleRow(role.id)}>
+                          <Badge color={mc} size={12}>{s.margin.toFixed(1)}%</Badge>
+                        </td>
+                        <td style={TD} onClick={()=>toggleRow(role.id)}>
+                          <div style={{display:"flex",gap:2}}>
+                            {role.weekAllocations.slice(0,numWeeks).map((w,wi)=>(
+                              <div key={wi} style={{
+                                width:22,height:18,borderRadius:3,
+                                background:w===1?C.accent2+"33":w===0?C.border:C.accent+"22",
+                                color:w===1?C.accent2:w===0?C.muted:C.accent,
+                                display:"flex",alignItems:"center",justifyContent:"center",
+                                fontSize:8,fontWeight:700,
+                              }}>{w}</div>
+                            ))}
+                          </div>
+                        </td>
+                        <td style={{...TD,textAlign:"right"}} onClick={()=>toggleRow(role.id)}>
+                          <span style={{fontFamily:"'JetBrains Mono',monospace",color:C.accent,fontSize:12}}>{s.hours}h</span>
+                        </td>
+                        <td style={{...TD,textAlign:"right"}} onClick={()=>toggleRow(role.id)}>
+                          <span style={{fontFamily:"'JetBrains Mono',monospace",color:C.accent3,fontSize:12}}>{fmt(s.cost,sym,currency)}</span>
+                        </td>
+                        <td style={{...TD,textAlign:"right"}} onClick={()=>toggleRow(role.id)}>
+                          <span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:C.accent2,fontSize:12}}>{fmt(s.revenue,sym,currency)}</span>
+                        </td>
+                        <td style={TD}>
                           <IconBtn onClick={()=>delR(role.id)} title="Delete role" color={C.danger} C={C}>✕</IconBtn>
-                        </div>
-                      </td>
-                    </tr>
+                        </td>
+                      </tr>
+                      {expanded && (
+                        <tr key={role.id+"_ex"} style={{borderTop:`1px solid ${C.border}`}}>
+                          <td colSpan={8} style={{padding:0,background:C.surface}}>
+                            <div style={{padding:"12px 16px 14px 40px",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12}}>
+                              <div>
+                                <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:"0.06em",marginBottom:4,textTransform:"uppercase"}}>Role Name</div>
+                                <TextInput value={role.name} onChange={v=>upd(role.id,"name",v)} extraStyle={{fontWeight:600}} C={C}/>
+                              </div>
+                              <div>
+                                <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:"0.06em",marginBottom:4,textTransform:"uppercase"}}>CBR / hr ({sym})</div>
+                                <RateInput usdValue={role.rate} onUsdChange={v=>upd(role.id,"rate",v)} currency={currency} C={C}/>
+                              </div>
+                              <div>
+                                <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:"0.06em",marginBottom:4,textTransform:"uppercase"}}>WSR / hr ({sym})</div>
+                                <RateInput usdValue={role.wsr} onUsdChange={v=>upd(role.id,"wsr",v)} currency={currency} C={C} highlight={C.accent2}/>
+                              </div>
+                              <div>
+                                <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:"0.06em",marginBottom:4,textTransform:"uppercase"}}>Hrs / week</div>
+                                <NumInput value={role.hoursPerWeek??sprintHours} onChange={v=>upd(role.id,"hoursPerWeek",v)} step={1} min={1} C={C}/>
+                              </div>
+                              {role.weekAllocations.slice(0,numWeeks).map((w,wi)=>(
+                                <div key={wi}>
+                                  <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:"0.06em",marginBottom:4,textTransform:"uppercase"}}>
+                                    {editLabel===`${role.id}-${wi}`?(
+                                      <input autoFocus value={weekLabels[wi]}
+                                        onChange={e=>setWeekLabels(p=>p.map((l,j)=>j===wi?e.target.value:l))}
+                                        onBlur={()=>setEditLabel(null)}
+                                        onKeyDown={e=>e.key==="Enter"&&setEditLabel(null)}
+                                        style={{background:"transparent",border:"none",color:C.accent,width:40,fontFamily:"monospace",fontSize:9,fontWeight:700,outline:`1px solid ${C.accent}`,borderRadius:3,padding:"1px 3px"}}
+                                      />
+                                    ):(
+                                      <span style={{cursor:"pointer",borderBottom:`1px dashed ${C.border}`}} onClick={()=>setEditLabel(`${role.id}-${wi}`)}>{weekLabels[wi]}</span>
+                                    )}
+                                  </div>
+                                  <NumInput value={w} onChange={v=>updW(role.id,wi,Math.min(1,Math.max(0,v)))} step={0.1} C={C} extraStyle={{color:w===1?C.accent2:w===0?C.muted:C.text}}/>
+                                </div>
+                              ))}
+                              <div style={{display:"flex",gap:6,alignItems:"flex-end"}}>
+                                <button onClick={()=>fillW(role.id,role.weekAllocations[0])} style={{background:C.accent+"22",border:`1px solid ${C.accent}44`,borderRadius:6,color:C.accent,cursor:"pointer",padding:"5px 10px",fontSize:11,fontFamily:"'Space Grotesk',sans-serif"}}>↔ Fill all</button>
+                                <button onClick={()=>applyMargin(role.id)} style={{background:C.accent2+"22",border:`1px solid ${C.accent2}44`,borderRadius:6,color:C.accent2,cursor:"pointer",padding:"5px 10px",fontSize:11,fontFamily:"'Space Grotesk',sans-serif"}}>🎯 Apply margin</button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr style={{borderTop:`2px solid ${C.border}`,background:C.surface}}>
                   <td colSpan={4} style={{...TD,fontSize:11,color:C.muted,fontWeight:700,letterSpacing:"0.05em"}}>TOTALS</td>
-                  <td colSpan={1+numWeeks} style={TD}/>
-                  <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:C.accent2}}>{stats.reduce((a,s)=>a+s.total,0).toFixed(1)}</span></td>
                   <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",color:C.accent,fontWeight:700}}>{totalHours}h</span></td>
-                  <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:14,color:C.accent3}}>{fmt(totalCostUSD,sym,currency)}</span></td>
-                  <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:14,color:C.accent2}}>{fmt(totalRevenueUSD,sym,currency)}</span></td>
+                  <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:13,color:C.accent3}}>{fmt(totalCostUSD,sym,currency)}</span></td>
+                  <td style={{...TD,textAlign:"right"}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:13,color:C.accent2}}>{fmt(totalRevenueUSD,sym,currency)}</span></td>
                   <td style={TD}/>
                 </tr>
               </tfoot>
             </table>
           </div>
           <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:24}}>
-            <button onClick={addR} style={{background:`linear-gradient(135deg,${C.accent}22,${C.accent2}22)`,border:`1px solid ${C.accent}`,color:C.accent,borderRadius:8,padding:"8px 18px",cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"'Space Grotesk',sans-serif",display:"flex",alignItems:"center",gap:6}}>+ Add Role</button>
+            <button onClick={addR} style={{background:`linear-gradient(135deg,${C.accent}22,${C.accent2}22)`,border:`1px solid ${C.accent}`,color:C.accent,borderRadius:8,padding:"7px 16px",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:"'Space Grotesk',sans-serif",display:"flex",alignItems:"center",gap:6}}>+ Add Role</button>
             <Btn onClick={()=>changeWeeks(numWeeks+1)} C={C} accent={C.accent2}>+ Add Week</Btn>
             {numWeeks>1&&<Btn onClick={()=>changeWeeks(numWeeks-1)} C={C} accent={C.danger}>− Remove Week</Btn>}
-            <span style={{marginLeft:"auto",color:C.muted,fontSize:12}}>💡 Click week headers to rename · ↔ fills all weeks</span>
+            <span style={{marginLeft:"auto",color:C.muted,fontSize:11}}>💡 Click a row to expand · rename weeks inside expanded row</span>
           </div>
         </>)}
 
-        <SectionHeader label="MARGIN ENGINE" open={showEngine} onToggle={()=>setShowEngine(s=>!s)} badge={`Target ${targetMargin}% · Current ${overallMargin.toFixed(1)}%`} badgeColor={marginColor(overallMargin,targetMargin,C)} C={C}/>
-        {showEngine&&<MarginEngine roles={roles} setRoles={setRoles} targetMargin={targetMargin} setTargetMargin={setTM} stats={stats} sym={sym} currency={currency} C={C}/>}
-
+        {/* ── ROLE BREAKDOWN (bar chart) ── */}
         <SectionHeader label="ROLE BREAKDOWN" open={showBreakdown} onToggle={()=>setShowBreakdown(s=>!s)} badge={`${roles.length} roles`} C={C}/>
-        {showBreakdown&&(
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+        {showBreakdown && (
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px 20px",marginBottom:20,boxShadow:C.shadow}}>
+            <div style={{display:"flex",gap:14,marginBottom:14}}>
+              {[{label:"Cost",color:C.accent3},{label:"Revenue",color:C.accent2}].map(l=>(
+                <div key={l.label} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.muted}}>
+                  <div style={{width:9,height:9,borderRadius:2,background:l.color}}/>
+                  {l.label}
+                </div>
+              ))}
+            </div>
             {roles.map((r,i)=>{
-              const s=stats[i]; const revPct=totalRevenueUSD>0?(s.revenue/totalRevenueUSD*100).toFixed(1):0;
-              const col=BAR_COLORS[i%BAR_COLORS.length]; const mc=marginColor(s.margin,targetMargin,C);
+              const s=stats[i];
+              const mc=marginColor(s.margin,targetMargin,C);
+              const maxVal=Math.max(...stats.map(x=>x.revenue),1);
+              const costPct=s.cost/maxVal*100;
+              const revPct=s.revenue/maxVal*100;
               return (
-                <div key={r.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 16px",flex:"1 1 160px",minWidth:160,boxShadow:C.shadow}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                    <span style={{fontWeight:700,fontSize:14}}>{r.name}</span>
-                    <Badge color={mc}>{s.margin.toFixed(1)}%</Badge>
+                <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                  <div style={{width:36,fontSize:11,color:C.text,fontWeight:600,flexShrink:0}}>{r.name}</div>
+                  <div style={{flex:1,height:26,background:C.surface,borderRadius:5,overflow:"hidden",display:"flex"}}>
+                    <div style={{width:`${costPct}%`,background:C.accent3+"44",borderRight:`2px solid ${C.accent3}`,display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:4,transition:"width 0.5s"}}>
+                      <span style={{fontSize:9,fontWeight:700,color:C.accent3,whiteSpace:"nowrap"}}>{fmt(s.cost,sym,currency)}</span>
+                    </div>
+                    <div style={{width:`${revPct-costPct}%`,background:C.accent2+"22",display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:4,transition:"width 0.5s"}}>
+                      <span style={{fontSize:9,fontWeight:700,color:C.accent2,whiteSpace:"nowrap"}}>{fmt(s.revenue,sym,currency)}</span>
+                    </div>
                   </div>
-                  <div style={{height:4,background:C.border,borderRadius:2,marginBottom:8}}>
-                    <div style={{height:"100%",width:`${revPct}%`,background:col,borderRadius:2,transition:"width 0.3s"}}/>
+                  <div style={{width:76,textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:12,fontWeight:700,fontFamily:"monospace",color:mc}}>{s.margin.toFixed(1)}%</div>
+                    <div style={{fontSize:9,color:C.muted}}>{s.hours}h</div>
                   </div>
-                  <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:15,fontWeight:700,color:col}}>{fmt(s.revenue,sym,currency)}</div>
-                  <div style={{fontSize:11,color:C.muted,marginTop:3,fontFamily:"monospace"}}>Cost {fmt(s.cost,sym,currency)} · {s.hours}h</div>
-                  <div style={{fontSize:11,color:C.muted,marginTop:1,fontFamily:"monospace"}}>{fmtRate(r.rate,sym,currency)}/h CBR · {fmtRate(r.wsr,sym,currency)}/h WSR</div>
                 </div>
               );
             })}
+            <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",fontSize:10,color:C.muted,flexWrap:"wrap",gap:8}}>
+              <span>Total Cost <span style={{color:C.accent3,fontWeight:700,fontFamily:"monospace"}}>{fmt(totalCostUSD,sym,currency)}</span></span>
+              <span>Total Revenue <span style={{color:C.accent2,fontWeight:700,fontFamily:"monospace"}}>{fmt(totalRevenueUSD,sym,currency)}</span></span>
+              <span>Overall Margin <span style={{color:gapColor,fontWeight:700,fontFamily:"monospace"}}>{overallMargin.toFixed(1)}%</span></span>
+            </div>
           </div>
         )}
-
-        <SectionHeader label="AI TOOLS" open={showCommentary} onToggle={()=>setShowCommentary(s=>!s)} badge="Margin Commentary" badgeColor={C.accent} C={C}/>
-        <SectionHeader label="AI MARGIN COMMENTARY" open={showCommentary} onToggle={()=>setShowCommentary(s=>!s)} C={C}/>
-        {showCommentary&&<MarginCommentary roles={roles} stats={stats} totalCostUSD={totalCostUSD} totalRevenueUSD={totalRevenueUSD} overallMargin={overallMargin} targetMargin={targetMargin} sym={sym} currency={currency} apiKey={apiKey} C={C}/>}
       </div>
+
+      {/* ── FLOATING AI COMMENTARY BUTTON ── */}
+      <div style={{position:"fixed",bottom:24,right:24,zIndex:200}}>
+        {showAI && (
+          <div style={{
+            position:"absolute",bottom:52,right:0,width:280,
+            background:C.card,border:`1px solid ${C.border}`,
+            borderRadius:14,padding:16,boxShadow:C.shadow,
+            animation:"fadeUp 0.2s ease",
+          }}>
+            <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
+            <button onClick={()=>setShowAI(false)} style={{float:"right",background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button>
+            <div style={{fontWeight:700,fontSize:13,color:C.text,marginBottom:2}}>💬 AI Commentary</div>
+            <div style={{fontSize:11,color:C.muted,marginBottom:12}}>Plain English analysis of your numbers</div>
+            <MarginCommentary roles={roles} stats={stats} totalCostUSD={totalCostUSD} totalRevenueUSD={totalRevenueUSD} overallMargin={overallMargin} targetMargin={targetMargin} sym={sym} currency={currency} apiKey={apiKey} C={C}/>
+          </div>
+        )}
+        <button onClick={()=>setShowAI(s=>!s)} style={{
+          background:`linear-gradient(135deg,${C.accent},${C.accent2})`,
+          border:"none",borderRadius:28,color:"#fff",
+          padding:"10px 18px",fontSize:13,fontWeight:700,
+          cursor:"pointer",display:"flex",alignItems:"center",gap:7,
+          boxShadow:`0 4px 16px ${C.accent}55`,fontFamily:"'Space Grotesk',sans-serif",
+          transition:"transform 0.15s",
+        }}
+          onMouseEnter={e=>e.currentTarget.style.transform="scale(1.04)"}
+          onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}
+        >
+          <svg width="13" height="13" viewBox="0 0 15 15" fill="none"><path d="M7.5 1L9 5.5H14L10 8.3l1.5 4.2L7.5 9.8 3.5 12.5 5 8.3 1 5.5h5L7.5 1z" fill="white"/></svg>
+          AI Commentary
+        </button>
+      </div>
+
     </div>
   );
 }
 
-/* ═══════════════════════════════════════════════
-   ROOT APP
-═══════════════════════════════════════════════ */
 export default function App() {
-  const [dark, setDark]         = useState(true);
+  const [dark, setDark]         = useState(false);
   const C                        = THEMES[dark ? "dark" : "light"];
   const [page, setPage]         = useState("intake");
   const [roles, setRoles]       = useState(defaultRoles);
