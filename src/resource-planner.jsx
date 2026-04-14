@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
+import * as XLSX from "xlsx";
 
 /* ═══════════════════════════════════════════════
    THEMES
@@ -85,6 +86,24 @@ function fileToBase64(file) {
     reader.readAsDataURL(file);
   });
 }
+function fileToExcel(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const csv = XLSX.utils.sheet_to_csv(worksheet);
+        resolve(csv);
+      } catch (err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 function fileToText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -620,6 +639,7 @@ const FILE_TYPE_BADGES = [
   null,
   { ext: "CSV", label: "Data",  bg: "#edfff6", color: "#059669" },
   { ext: "TXT", label: "Data",  bg: "#f0f4ff", color: "#4f46e5" },
+  { ext: "XLS", label: "Excel", bg: "#e8f5e9", color: "#2e7d32" },
 ];
 const EXT_COLORS = {
   png:  { bg: "#fff8e6", color: "#d97706" },
@@ -628,6 +648,7 @@ const EXT_COLORS = {
   gif:  { bg: "#fdf4ff", color: "#9333ea" },
   webp: { bg: "#f0f4ff", color: "#4f46e5" },
   csv:  { bg: "#edfff6", color: "#059669" },
+  xlsx: { bg: "#e8f5e9", color: "#2e7d32" },
   txt:  { bg: "#f0f4ff", color: "#4f46e5" },
 };
 
@@ -733,7 +754,7 @@ function IntakePage({ onLoad, onSkip, apiKey, setApiKey, dark, setDark }) {
   const [dragOver, setDragOver]       = useState(false);
   const fileRef                       = useRef();
 
-  const ACCEPTED = ".png,.jpg,.jpeg,.gif,.webp,.csv,.txt";
+  const ACCEPTED = ".png,.jpg,.jpeg,.gif,.webp,.csv,.txt,.xlsx,.xls";
 
   function handleFile(f) { if (!f) return; setFile(f); setError(""); }
   function onDrop(e) {
@@ -742,6 +763,7 @@ function IntakePage({ onLoad, onSkip, apiKey, setApiKey, dark, setDark }) {
   }
 
   const isImage  = file && file.type.startsWith("image/");
+  const isExcel  = file && (file.name.endsWith(".xlsx") || file.name.endsWith(".xls"));
   const fileExt  = file ? file.name.split(".").pop().toLowerCase() : "";
   const fileClr  = EXT_COLORS[fileExt] || { bg: "#f1f5f9", color: "#64748b" };
   const fileSize = file
@@ -785,7 +807,9 @@ Rules:
           { type: "text", text: `${systemPrompt}\n\nExtract from this image. Project context: ${projectDesc || "not provided"}` },
         ]}];
       } else {
-        const rawContent = file ? await fileToText(file) : pasteText;
+        const rawContent = file
+          ? (isExcel ? await fileToExcel(file) : await fileToText(file))
+          : pasteText;
         messages = [{ role: "user", content: `${systemPrompt}\n\nExtract from this data. Project context: ${projectDesc || "not provided"}\n\nData:\n${rawContent}` }];
       }
 
