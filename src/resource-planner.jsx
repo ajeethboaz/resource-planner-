@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 
 /* ═══════════════════════════════════════════════
    THEMES
@@ -631,6 +631,96 @@ const EXT_COLORS = {
   txt:  { bg: "#f0f4ff", color: "#4f46e5" },
 };
 
+
+/* ═══════════════════════════════════════════════
+   LANDING PAGE (calm.com style)
+═══════════════════════════════════════════════ */
+const landingKeyframes = `
+  @keyframes breatheOuter {
+    0%,100% { transform:translate(-50%,-50%) scale(1); opacity:.5; }
+    50%      { transform:translate(-50%,-50%) scale(1.12); opacity:.85; }
+  }
+  @keyframes breatheInner {
+    0%,100% { transform:translate(-50%,-50%) scale(1); opacity:.6; }
+    50%      { transform:translate(-50%,-50%) scale(1.1); opacity:.95; }
+  }
+  @keyframes iconFloat {
+    0%,100% { transform:translateY(0); }
+    50%      { transform:translateY(-6px); }
+  }
+  @keyframes landingNameFade {
+    from { opacity:0; transform:translateY(8px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+  @keyframes landingFadeOut {
+    from { opacity:1; }
+    to   { opacity:0; }
+  }
+`;
+
+function LandingPage({ onEnter }) {
+  const [exiting, setExiting] = useState(false);
+
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = landingKeyframes;
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
+
+  const handleClick = () => {
+    setExiting(true);
+    setTimeout(() => onEnter(), 500);
+  };
+
+  return (
+    <div onClick={handleClick} style={{
+      width:"100vw", height:"100vh", background:"#dde8f2",
+      display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center",
+      cursor:"pointer", position:"relative", overflow:"hidden",
+      animation: exiting ? "landingFadeOut 0.5s ease forwards" : "none",
+      userSelect:"none",
+    }}>
+      {/* Outer breathing ring */}
+      <div style={{
+        position:"absolute", width:360, height:360, borderRadius:"50%",
+        background:"rgba(255,255,255,0.3)", top:"50%", left:"50%",
+        animation:"breatheOuter 5s ease-in-out infinite", pointerEvents:"none",
+      }}/>
+      {/* Inner breathing ring */}
+      <div style={{
+        position:"absolute", width:240, height:240, borderRadius:"50%",
+        background:"rgba(255,255,255,0.42)", top:"50%", left:"50%",
+        animation:"breatheInner 5s ease-in-out infinite 0.3s", pointerEvents:"none",
+      }}/>
+      {/* Floating icon */}
+      <div style={{ position:"relative", zIndex:2, animation:"iconFloat 5s ease-in-out infinite" }}>
+        <div style={{
+          width:88, height:88, background:"#1a3356", borderRadius:22,
+          display:"flex", alignItems:"center", justifyContent:"center",
+          boxShadow:"0 12px 40px rgba(26,51,86,0.2)",
+        }}>
+          <svg width="50" height="50" viewBox="0 0 50 50" fill="none">
+            <rect x="5"  y="24" width="10" height="20" rx="2.5" fill="#4caf7d"/>
+            <rect x="20" y="14" width="10" height="30" rx="2.5" fill="#e8453c"/>
+            <rect x="35" y="7"  width="10" height="37" rx="2.5" fill="#2196f3"/>
+          </svg>
+        </div>
+      </div>
+      {/* App name */}
+      <div style={{
+        position:"relative", zIndex:2, marginTop:22,
+        fontSize:11, letterSpacing:"0.16em", textTransform:"uppercase",
+        color:"#8aaac4", fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif",
+        fontWeight:500, animation:"landingNameFade 1.2s ease 0.4s both",
+      }}>
+        Resource Effort Planner
+      </div>
+    </div>
+  );
+}
+
 // Intake always uses light palette — dark toggle only affects the planner
 const IL = THEMES.light;
 
@@ -659,12 +749,15 @@ function IntakePage({ onLoad, onSkip, apiKey, setApiKey, dark, setDark }) {
     : "";
 
   const canSubmit = !!file || pasteText.trim().length > 0;
+  const [analysisStep, setAnalysisStep] = useState(-1); // -1=idle, 0-3=steps, 4=done
+  const [parsedResult, setParsedResult] = useState(null);
 
   async function analyse() {
     setError("");
     if (!apiKey) { setError("Please enter your Anthropic API key below."); return; }
     if (!canSubmit) { setError("Please upload a file or paste your table first."); return; }
     setLoading(true);
+    setAnalysisStep(0);
     try {
       const systemPrompt = `You are a resource planning data extractor. Extract role data and return ONLY valid JSON, no other text, no markdown fences.
 
@@ -692,16 +785,22 @@ Rules:
           { type: "text", text: `${systemPrompt}\n\nExtract from this image. Project context: ${projectDesc || "not provided"}` },
         ]}];
       } else {
-        const content = file ? await fileToText(file) : pasteText;
-        messages = [{ role: "user", content: `${systemPrompt}\n\nExtract from this data. Project context: ${projectDesc || "not provided"}\n\nData:\n${content}` }];
+        const rawContent = file ? await fileToText(file) : pasteText;
+        messages = [{ role: "user", content: `${systemPrompt}\n\nExtract from this data. Project context: ${projectDesc || "not provided"}\n\nData:\n${rawContent}` }];
       }
 
-      const text   = await callClaude(apiKey, messages, 1500);
+      setAnalysisStep(1);
+      const text = await callClaude(apiKey, messages, 1500);
+      setAnalysisStep(2);
       const parsed = parseAIResponse(text);
       if (!parsed.roles.length) throw new Error("No roles found. Try a different format.");
-      onLoad(parsed, projectDesc);
-    } catch (e) { setError(`❌ ${e.message}`); }
-    setLoading(false);
+      setAnalysisStep(3);
+      setTimeout(() => { setAnalysisStep(4); setParsedResult(parsed); setLoading(false); }, 500);
+    } catch (e) {
+      setError(`❌ ${e.message}`);
+      setAnalysisStep(-1);
+      setLoading(false);
+    }
   }
 
   return (
@@ -868,12 +967,107 @@ Rules:
             }}>{error}</div>
           )}
 
-          {/* CTA */}
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
-            <ApplyBtn onClick={analyse} disabled={loading} C={IL}>
-              {loading ? "⏳ AI is reading your data..." : "✨ Analyse & Load into Planner →"}
-            </ApplyBtn>
-          </div>
+          {/* CTA — hidden during analysis */}
+          {analysisStep === -1 && (
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+              <ApplyBtn onClick={analyse} disabled={!canSubmit} C={IL}>
+                ✨ Analyse &amp; Load into Planner →
+              </ApplyBtn>
+            </div>
+          )}
+
+          {/* STEP-BY-STEP ANALYSIS PANEL */}
+          {analysisStep >= 0 && (
+            <div style={{
+              background: "#fff", border: "1px solid #dde3f0",
+              borderRadius: 16, overflow: "hidden", marginBottom: 20,
+            }}>
+              {/* Steps */}
+              <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+                {[
+                  { icon: "📂", label: "Reading your file",         sub: ["Preparing data…",           "File ready · sending to AI"] },
+                  { icon: "🤖", label: "AI analysing structure",    sub: ["Waiting…",                  "Identifying roles, rates and weeks…"] },
+                  { icon: "📊", label: "Extracting role data",      sub: ["Waiting…",                  "Parsing allocations and hours…"] },
+                  { icon: "✅", label: "Ready to load",             sub: ["Waiting…",                  "Review and confirm below"] },
+                ].map((step, i) => {
+                  const isDone   = analysisStep > i;
+                  const isActive = analysisStep === i;
+                  return (
+                    <div key={i} style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      opacity: isDone || isActive ? 1 : 0.3,
+                      transition: "opacity 0.4s",
+                    }}>
+                      <div style={{
+                        width: 30, height: 30, borderRadius: "50%", flexShrink: 0,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 13,
+                        background: isDone ? "#d1fae5" : isActive ? "#dbeafe" : "#f1f5f9",
+                        border: `1.5px solid ${isDone ? "#a7f3d0" : isActive ? "#93c5fd" : "#e2e8f0"}`,
+                        animation: isActive ? "pulse 1s ease-in-out infinite" : "none",
+                      }}>{step.icon}</div>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: isDone ? "#065f46" : isActive ? "#1d4ed8" : "#334155" }}>
+                          {step.label}
+                        </div>
+                        <div style={{ fontSize: 11, color: isDone ? "#6ee7b7" : isActive ? "#93c5fd" : "#94a3b8", marginTop: 1 }}>
+                          {isDone || isActive ? step.sub[1] : step.sub[0]}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Role preview cards — shown after step 4 */}
+              {analysisStep === 4 && parsedResult && (
+                <div style={{ padding: "14px 18px", borderTop: "1px solid #f1f5f9", background: "#f8fafc" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#334155", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 10 }}>
+                    {parsedResult.roles.length} roles detected · {parsedResult.numWeeks} weeks
+                    {parsedResult.projectType ? ` · ${parsedResult.projectType}` : ""}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 8, marginBottom: 14 }}>
+                    {parsedResult.roles.map((r, i) => (
+                      <div key={i} style={{
+                        background: "#fff", border: "1px solid #e2e8f0",
+                        borderRadius: 10, padding: "10px 12px",
+                      }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#1e3a5f", marginBottom: 6 }}>{r.name}</div>
+                        {[
+                          ["CBR", `$${r.rate}/h`],
+                          ["WSR", `$${r.wsr}/h`],
+                          ["Alloc", `${r.weekAllocations?.[0] ?? 1} / wk`],
+                        ].map(([lbl, val]) => (
+                          <div key={lbl} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#94a3b8", marginTop: 3 }}>
+                            <span>{lbl}</span>
+                            <span style={{ color: "#334155", fontWeight: 600, fontFamily: "monospace" }}>{val}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => onLoad(parsedResult, projectDesc)} style={{
+                    width: "100%", background: "#059669", color: "#fff", border: "none",
+                    borderRadius: 10, padding: "12px", fontSize: 13, fontWeight: 600,
+                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                    fontFamily: "'Space Grotesk',sans-serif", transition: "background 0.15s",
+                  }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    Load into Planner
+                  </button>
+                  <button onClick={() => { setAnalysisStep(-1); setParsedResult(null); }} style={{
+                    width: "100%", background: "transparent", border: "1px solid #d0dbe8",
+                    borderRadius: 10, padding: "8px", fontSize: 12, color: "#64748b",
+                    cursor: "pointer", marginTop: 6, fontFamily: "'Space Grotesk',sans-serif",
+                  }}>
+                    Edit before loading
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <style>{`@keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }`}</style>
 
           {/* API key */}
           <div style={{
@@ -1325,7 +1519,7 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
 export default function App() {
   const [dark, setDark]         = useState(false);
   const C                        = THEMES[dark ? "dark" : "light"];
-  const [page, setPage]         = useState("intake");
+  const [page, setPage]         = useState("landing");
   const [roles, setRoles]       = useState(defaultRoles);
   const [numWeeks, setNumWeeks] = useState(4);
   const [loadedFromAI, setLoaded] = useState(false);
@@ -1337,6 +1531,10 @@ export default function App() {
   }
   function handleSkip() {
     setRoles(defaultRoles); setNumWeeks(4); setLoaded(false); setPage("planner");
+  }
+
+  if (page === "landing") {
+    return <LandingPage onEnter={() => setPage("intake")} />;
   }
 
   if (page === "intake") {
