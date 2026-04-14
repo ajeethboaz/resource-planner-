@@ -731,7 +731,7 @@ Rules:
           <span style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>Resource Effort Planner</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <ThemeToggle dark={dark} setDark={setDark} C={IL}/>
+          <ThemeToggle dark={dark} setDark={setDark} C={THEMES[dark ? "dark" : "light"]}/>
           <button onClick={onSkip} style={{
             background: "transparent", border: "1px solid rgba(255,255,255,0.2)",
             borderRadius: 8, color: "#8aaac4", cursor: "pointer",
@@ -937,7 +937,6 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
   const [showTable, setShowTable]         = useState(true);
   const [showEngine, setShowEngine]       = useState(true);
   const [showBreakdown, setShowBreakdown] = useState(true);
-  const [showSuggester, setShowSuggester] = useState(false);
   const [showCommentary, setShowCommentary] = useState(false);
   const [targetMargin, setTM]             = useState(30);
   const sym = SYMBOLS[currency];
@@ -1165,9 +1164,7 @@ function PlannerPage({ roles, setRoles, numWeeks, setNumWeeks, loadedFromAI, pro
           </div>
         )}
 
-        <SectionHeader label="AI TOOLS" open={showSuggester||showCommentary} onToggle={()=>{setShowSuggester(s=>!s);setShowCommentary(s=>!s);}} badge="Role Suggester · Margin Commentary" badgeColor={C.accent} C={C}/>
-        <SectionHeader label="SMART ROLE SUGGESTER" open={showSuggester} onToggle={()=>setShowSuggester(s=>!s)} C={C}/>
-        {showSuggester&&<RoleSuggester roles={roles} setRoles={setRoles} numWeeks={numWeeks} targetMargin={targetMargin} projectType={projectType} apiKey={apiKey} C={C}/>}
+        <SectionHeader label="AI TOOLS" open={showCommentary} onToggle={()=>setShowCommentary(s=>!s)} badge="Margin Commentary" badgeColor={C.accent} C={C}/>
         <SectionHeader label="AI MARGIN COMMENTARY" open={showCommentary} onToggle={()=>setShowCommentary(s=>!s)} C={C}/>
         {showCommentary&&<MarginCommentary roles={roles} stats={stats} totalCostUSD={totalCostUSD} totalRevenueUSD={totalRevenueUSD} overallMargin={overallMargin} targetMargin={targetMargin} sym={sym} currency={currency} apiKey={apiKey} C={C}/>}
       </div>
